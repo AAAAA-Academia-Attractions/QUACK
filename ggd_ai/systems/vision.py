@@ -54,16 +54,30 @@ class VisionSystem:
         current_room = player.current_room
         visible_rooms = self.get_visible_rooms(player.player_id, current_room)
 
-        visible_players = [
-            p.player_id
-            for p in state.alive_players
-            if p.current_room in visible_rooms and p.player_id != player.player_id
-        ]
+        visible_players: list[str] = []
+        for p in state.alive_players:
+            if p.player_id == player.player_id:
+                continue
+
+            if player.is_in_transit:
+                # In a corridor: can see others in the same corridor
+                if (p.is_in_transit
+                        and p.current_room == player.current_room
+                        and p.moving_to == player.moving_to):
+                    visible_players.append(p.player_id)
+                elif (p.is_in_transit
+                        and p.current_room == player.moving_to
+                        and p.moving_to == player.current_room):
+                    visible_players.append(p.player_id)
+            else:
+                # In a room: can only see others in the same room (not in transit)
+                if not p.is_in_transit and p.current_room == current_room:
+                    visible_players.append(p.player_id)
 
         visible_bodies = [
             b.player_id
             for b in state.bodies
-            if b.room in visible_rooms
+            if b.room == current_room and not player.is_in_transit
         ]
 
         return PlayerVisibility(

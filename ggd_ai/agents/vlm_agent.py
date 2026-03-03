@@ -46,12 +46,14 @@ class VLMAgent(BaseAgent):
         base_url: str = "https://endpoint.greatrouter.com",
         model: str = "gpt-5.2",
         temperature: float = 0.7,
+        speak_chinese: bool = False,
     ):
         super().__init__(player_id, name)
         self.model = model
         self.temperature = temperature
         self.api_key = api_key
         self.base_url = base_url
+        self.speak_chinese = speak_chinese
 
         self._system_prompt = ""
         self.memory = AgentMemory(name)
@@ -99,6 +101,7 @@ class VLMAgent(BaseAgent):
             total_ducks=total_ducks,
             teammates=teammates,
             all_players=all_players,
+            speak_chinese=self.speak_chinese,
         )
         self.memory = AgentMemory(self.name)
 

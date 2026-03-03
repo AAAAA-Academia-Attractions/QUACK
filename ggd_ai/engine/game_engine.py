@@ -197,7 +197,27 @@ class GameEngine:
 
         self.event_bus.emit(GameEvent(
             event_type=EventType.GAME_STARTED,
-            data={"players": all_player_names},
+            data={
+                "players": all_player_names,
+                "config": {
+                    "num_players": self._num_players,
+                    "num_ducks": self._num_ducks,
+                    "map": self.config.get("game", {}).get("map", "configs/maps/simple_ship.yaml"),
+                },
+                "initial_state": {
+                    pid: {
+                        "name": p.name,
+                        "role": p.role_name,
+                        "team": p.team.value,
+                        "room": p.current_room,
+                        "tasks": [
+                            {"name": t.task_name, "room": t.room, "ticks_required": t.ticks_required}
+                            for t in p.tasks
+                        ],
+                    }
+                    for pid, p in self.state.players.items()
+                },
+            },
             tick=0,
         ))
 
@@ -301,20 +321,21 @@ class GameEngine:
             return
 
         vis = self.vision_system.compute_visibility(player, self.state)
-        fog_revealed = self.vision_system.get_fog_revealed_rooms(
-            player.player_id, self.state.current_tick,
-        )
-        all_revealed = fog_revealed | vis.visible_rooms
 
+        # Global map: show ALL rooms (map layout), but NO other players.
+        # Only the viewer's position and their own task markers are visible.
+        all_rooms = set(self.game_map.room_names)
         global_img = self.renderer.render_global_map(
             state=self.state,
-            revealed_rooms=all_revealed,
+            revealed_rooms=all_rooms,
             viewer_room=player.current_room,
-            visible_players=vis.visible_players,
-            visible_bodies=vis.visible_bodies,
+            visible_players=[],
+            visible_bodies=[],
             viewer_id=player.player_id,
             tick=self.state.current_tick,
         )
+
+        # Local view: only shows players/bodies in visible rooms
         local_img = self.renderer.render_local_view(
             state=self.state,
             player=player,
@@ -465,6 +486,21 @@ class GameEngine:
         ]
         observation["speaker_order"] = speaker_names
         observation["my_position"] = self.state.current_speaker_idx
+
+        if (self.state.current_speaker_idx == 0 and self.state.discussion_round == 0
+                and speaker_id == self.state.meeting_caller and self.state.bodies):
+            observation["you_are_reporter"] = True
+            room_to_victims: dict[str, list[str]] = {}
+            for b in self.state.bodies:
+                name = self.state.players[b.player_id].name
+                room_to_victims.setdefault(b.room, []).append(name)
+            observation["body_info"] = [
+                {"room": room, "victims": names}
+                for room, names in room_to_victims.items()
+            ]
+        else:
+            observation["you_are_reporter"] = False
+            observation["body_info"] = []
 
         message = await agent.speak(observation)
         self.meeting_system.add_discussion_message(speaker_id, message, self.state)

@@ -35,13 +35,25 @@ if TYPE_CHECKING:
     from ggd_ai.map.game_map import GameMap, Room
 
 
-def _try_load_font(size: int = 12) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    ]
+_CHINESE_FONT_PATHS = [
+    "/usr/share/fonts/opentype/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
+]
+
+_DEJAVU_FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+]
+
+
+def _try_load_font(size: int = 12, prefer_chinese: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load a font. Tries Chinese-capable fonts first (for CJK speech rendering)."""
+    paths = (_CHINESE_FONT_PATHS if prefer_chinese else []) + _DEJAVU_FONT_PATHS
     for p in paths:
         try:
             return ImageFont.truetype(p, size)
@@ -700,21 +712,63 @@ class MapRenderer:
         event_log: list[str] | None = None,
         tick: int = 0,
     ) -> Image.Image:
-        """Render a god-view: all players, vision halos, roles, actions, event log."""
+        """Render a god-view: all players, vision halos, roles, actions, event log,
+        plus a grid of per-player local views at the bottom."""
         scale = 1.2
         map_w, map_h = self._canvas_size(scale)
 
         panel_w = 360
         hud_h = 56
-        total_w = map_w + panel_w
-        total_h = hud_h + map_h
+        top_w = map_w + panel_w
+        top_h = hud_h + map_h
 
-        img = Image.new("RGBA", (total_w, total_h), (*BACKGROUND_COLOR, 255))
+        # Build per-player local views
+        all_players = list(state.players.values())
+        local_views: list[tuple[str, Image.Image]] = []
+        for p in all_players:
+            if hasattr(vision_system, "compute_visibility"):
+                vis = vision_system.compute_visibility(p, state)
+                local_img = self.render_local_view(
+                    state=state,
+                    player=p,
+                    visible_rooms=vis.visible_rooms,
+                    visible_players=vis.visible_players,
+                    visible_bodies=vis.visible_bodies,
+                )
+            else:
+                local_img = self.render_local_view(
+                    state=state,
+                    player=p,
+                    visible_rooms={p.current_room},
+                    visible_players=[],
+                    visible_bodies=[],
+                )
+            local_views.append((p.player_id, local_img))
+
+        # Layout: single horizontal row of per-player POVs (keeps video landscape)
+        n = len(local_views)
+        cols = max(1, n)
+        rows = 1
+        thumb_w = top_w // cols
+        if local_views:
+            sample = local_views[0][1]
+            aspect = sample.size[1] / sample.size[0]
+            thumb_h = int(thumb_w * aspect)
+        else:
+            thumb_h = 240
+
+        label_h = 28
+        grid_h = rows * (thumb_h + label_h) + 10
+
+        separator_h = 36
+        total_h = top_h + separator_h + grid_h
+
+        img = Image.new("RGBA", (top_w, total_h), (*BACKGROUND_COLOR, 255))
         draw = ImageDraw.Draw(img)
 
         # HUD
-        draw.rectangle((0, 0, total_w, hud_h), fill=(*HUD_BG, 255))
-        draw.line((0, hud_h - 1, total_w, hud_h - 1), fill=(*HUD_BORDER, 255))
+        draw.rectangle((0, 0, top_w, hud_h), fill=(*HUD_BG, 255))
+        draw.line((0, hud_h - 1, top_w, hud_h - 1), fill=(*HUD_BORDER, 255))
 
         from ggd_ai.engine.game_state import Team
         completed, total_tasks = 0, 0
@@ -730,7 +784,7 @@ class MapRenderer:
 
         hud_right = f"Tasks: {completed}/{total_tasks}  |  Alive: {len(state.alive_players)}/{len(state.players)}"
         bbox = draw.textbbox((0, 0), hud_right, font=self._font_md)
-        draw.text((total_w - (bbox[2] - bbox[0]) - 16, 20), hud_right,
+        draw.text((top_w - (bbox[2] - bbox[0]) - 16, 20), hud_right,
                   fill=TEXT_LIGHT, font=self._font_md)
 
         map_y = hud_h
@@ -756,7 +810,46 @@ class MapRenderer:
         self._god_draw_all_players(img, draw, scale, state, map_y)
 
         # Right panel: player list + event log
-        self._god_draw_panel(draw, map_w, 0, panel_w, total_h, state, event_log)
+        self._god_draw_panel(draw, map_w, 0, panel_w, top_h, state, event_log)
+
+        # Separator between god map and local views
+        sep_y = top_h
+        draw.rectangle((0, sep_y, top_w, sep_y + separator_h),
+                        fill=(*HUD_BG, 255))
+        draw.text((top_w // 2, sep_y + separator_h // 2),
+                  "PLAYER POV (First-Person Views)",
+                  fill=(100, 200, 255, 255), font=self._font_xl, anchor="mm")
+
+        # Draw local views in 2-column grid
+        grid_start_y = sep_y + separator_h
+        for idx, (pid, local_img) in enumerate(local_views):
+            col = idx % cols
+            row = idx // cols
+            x = col * thumb_w
+            y = grid_start_y + row * (thumb_h + label_h)
+
+            # Resize local view to thumbnail
+            thumb = local_img.resize((thumb_w, thumb_h), Image.LANCZOS)
+            if thumb.mode == "RGBA":
+                img.paste(thumb, (x, y + label_h), thumb)
+            else:
+                img.paste(thumb, (x, y + label_h))
+
+            # Player label above each thumbnail
+            player = state.players.get(pid)
+            if player:
+                color = self._get_player_color(pid)
+                status = "DEAD" if not player.is_alive else player.current_room
+                role_tag = f" [{player.role_name}]"
+                label = f"{player.name}{role_tag} — {status}"
+                draw.rectangle((x, y, x + thumb_w, y + label_h),
+                                fill=(*HUD_BG, 255))
+                draw.text((x + thumb_w // 2, y + label_h // 2), label,
+                          fill=(*color, 255), font=self._font_md, anchor="mm")
+
+            # Border
+            draw.rectangle((x, y, x + thumb_w - 1, y + thumb_h + label_h - 1),
+                            outline=(*HUD_BORDER, 255), width=1)
 
         return img.convert("RGB")
 
@@ -1009,8 +1102,8 @@ class MapRenderer:
     def render_meeting_called(
         self, state: GameState, reason: str, tick: int,
     ) -> Image.Image:
-        """Render a meeting-called frame: who triggered it and why."""
-        w, h = 900, 500
+        """Render a meeting-called frame (1280x720): who triggered it and why."""
+        w, h = 1280, 720
         img = Image.new("RGB", (w, h), (20, 22, 32))
         draw = ImageDraw.Draw(img)
 
@@ -1073,7 +1166,7 @@ class MapRenderer:
     def _wrap_text(self, draw: ImageDraw.Draw, text: str,
                    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
                    max_width: int) -> list[str]:
-        """Word-wrap text to fit within max_width pixels."""
+        """Word-wrap text to fit within max_width. Handles CJK (no spaces) via char wrap."""
         words = text.split()
         lines: list[str] = []
         current = ""
@@ -1085,7 +1178,21 @@ class MapRenderer:
             else:
                 if current:
                     lines.append(current)
-                current = word
+                # Word itself may exceed max_width (e.g. CJK with no spaces)
+                bbox_word = draw.textbbox((0, 0), word, font=font)
+                if bbox_word[2] - bbox_word[0] <= max_width:
+                    current = word
+                else:
+                    current = ""
+                    for ch in word:
+                        trial = current + ch
+                        b = draw.textbbox((0, 0), trial, font=font)
+                        if b[2] - b[0] <= max_width:
+                            current = trial
+                        else:
+                            if current:
+                                lines.append(current)
+                            current = ch
         if current:
             lines.append(current)
         return lines if lines else [""]
@@ -1094,108 +1201,110 @@ class MapRenderer:
         self, state: GameState, speaker_id: str, message: str,
         discussion_history: list[dict[str, str]], tick: int,
     ) -> Image.Image:
-        """Render a discussion frame showing the current speaker's full message
-        and abbreviated summaries of previous speeches."""
+        """Render a discussion frame (1280x720, 16:9). Two-panel layout: past
+        speeches on left, current speaker full message on right. God view: shows
+        actual body locations so observer can see if reporter is lying."""
+        w, h = 1280, 720
+        header_h = 56
+        body_banner_h = 0
+        if state.bodies:
+            body_banner_h = 32
+        content_y = header_h + body_banner_h
+        content_h = h - content_y
 
-        w = 900
-        panel_x = 20
-        panel_w = w - 40
-        line_h = 18
-        header_h = 50
-        speaker_section_h = 80
-
-        # Pre-calculate the height needed for current speaker's wrapped message
-        tmp_img = Image.new("RGB", (1, 1))
-        tmp_draw = ImageDraw.Draw(tmp_img)
-        msg_max_w = panel_w - 30
-        wrapped_lines = self._wrap_text(tmp_draw, message, self._font_sm, msg_max_w)
-
-        # Past speeches (all except the current one)
-        past_entries = [e for e in discussion_history if not (
-            e["player_id"] == speaker_id and e is discussion_history[-1]
-        )]
-
-        past_height = len(past_entries) * (line_h + 4) if past_entries else 0
-        current_speaker_text_h = len(wrapped_lines) * line_h + 10
-        # name line + border padding
-        current_block_h = 24 + current_speaker_text_h + 12
-
-        total_content = header_h + 14 + past_height + current_block_h + speaker_section_h + 10
-        h = max(550, total_content)
+        left_w = int(w * 0.38)
+        right_w = w - left_w - 20
+        sep_x = left_w + 10
 
         img = Image.new("RGB", (w, h), (20, 22, 32))
         draw = ImageDraw.Draw(img)
 
         # Header
         draw.rectangle((0, 0, w, header_h), fill=HUD_BG, outline=HUD_BORDER)
-        draw.text((w // 2, 25), "DISCUSSION", fill=(100, 200, 255),
+        draw.text((w // 2, 28), "DISCUSSION", fill=(100, 200, 255),
                   font=self._font_xl, anchor="mm")
-        draw.text((16, 16), f"Tick: {tick}", fill=TEXT_LIGHT, font=self._font_md)
+        draw.text((20, 18), f"Tick: {tick}", fill=TEXT_LIGHT, font=self._font_md)
 
-        y = header_h + 14
+        # Actual body locations (God view — truth so observer can spot lies)
+        if state.bodies:
+            room_to_victims: dict[str, list[str]] = {}
+            for b in state.bodies:
+                name = state.players[b.player_id].name
+                room_to_victims.setdefault(b.room, []).append(name)
+            parts = [f"{r} ({', '.join(v)})" for r, v in room_to_victims.items()]
+            truth_line = "Actual body locations: " + " | ".join(parts)
+            draw.rectangle((0, header_h, w, header_h + body_banner_h),
+                           fill=(40, 30, 50))
+            draw.text((w // 2, header_h + body_banner_h // 2),
+                      truth_line, fill=(255, 180, 100), font=self._font_md,
+                      anchor="mm")
 
-        # Past speeches — abbreviated
+        # Past speeches — left panel
+        past_entries = [e for e in discussion_history if not (
+            e["player_id"] == speaker_id and e is discussion_history[-1]
+        )]
+        left_x = 20
+        left_max_w = left_w - 40
+        past_line_h = 20
+        y = content_y + 12
+        draw.text((left_x, y - 4), "Previous:", fill=TEXT_DIM, font=self._font_sm)
+        y += 20
         for entry in past_entries:
+            if y > content_y + content_h - 30:
+                break
             pid = entry["player_id"]
             name = entry.get("name", self._get_player_name(pid))
             color = self._get_player_color(pid)
-            abbreviated = self._abbreviate_speech(entry["message"])
-
+            abbreviated = self._abbreviate_speech(entry["message"], max_chars=50)
             r = 4
-            draw.ellipse((panel_x + 5 - r, y + 7 - r,
-                           panel_x + 5 + r, y + 7 + r), fill=color)
-
-            name_x = panel_x + 18
-            draw.text((name_x, y + 7), f"{name}:", fill=color,
+            draw.ellipse((left_x - r, y + 6 - r, left_x + r, y + 6 + r), fill=color)
+            draw.text((left_x + 12, y + 6), f"{name}:", fill=color,
                       font=self._font_sm, anchor="lm")
-            name_bbox = draw.textbbox((0, 0), f"{name}:", font=self._font_sm)
-            msg_x = name_x + (name_bbox[2] - name_bbox[0]) + 6
-            draw.text((msg_x, y + 7), abbreviated, fill=TEXT_DIM,
+            bbox = draw.textbbox((0, 0), f"{name}:", font=self._font_sm)
+            msg_x = left_x + 14 + (bbox[2] - bbox[0])
+            draw.text((msg_x, y + 6), abbreviated, fill=TEXT_DIM,
                       font=self._font_sm, anchor="lm")
-            y += line_h + 4
+            y += past_line_h + 4
 
-        # Current speaker — full message with word wrap
-        if past_entries:
-            y += 4
-
-        box_y = y
-        box_h = current_block_h
-        draw.rectangle(
-            (panel_x, box_y, panel_x + panel_w, box_y + box_h),
-            outline=(100, 200, 255), width=2,
-        )
-        draw.rectangle(
-            (panel_x + 1, box_y + 1, panel_x + panel_w - 1, box_y + 3),
-            fill=(100, 200, 255),
-        )
+        # Current speaker — right panel (full message, larger font)
+        right_x = sep_x + 20
+        msg_max_w = right_w - 50
+        wrapped = self._wrap_text(draw, message, self._font_md, msg_max_w)
+        line_h = 24
 
         speaker_color = self._get_player_color(speaker_id)
         speaker_name = self._get_player_name(speaker_id)
 
-        # Speaker name inside the box
-        inner_y = box_y + 8
-        r = 5
-        draw.ellipse((panel_x + 12 - r, inner_y + 6 - r,
-                       panel_x + 12 + r, inner_y + 6 + r), fill=speaker_color)
-        draw.text((panel_x + 24, inner_y + 6), f"{speaker_name}:",
-                  fill=speaker_color, font=self._font_md, anchor="lm")
-        inner_y += 22
-
-        # Full message, word-wrapped
-        for wline in wrapped_lines:
-            draw.text((panel_x + 24, inner_y), wline, fill=TEXT_WHITE,
-                      font=self._font_sm)
+        box_y = content_y + 12
+        box_h = min(content_h - 100, 28 + len(wrapped) * line_h + 16)
+        draw.rectangle(
+            (right_x - 8, box_y, right_x + msg_max_w + 24, box_y + box_h),
+            outline=(100, 200, 255), width=2,
+        )
+        draw.rectangle(
+            (right_x - 7, box_y + 1, right_x + msg_max_w + 23, box_y + 6),
+            fill=(100, 200, 255),
+        )
+        inner_y = box_y + 14
+        r = 6
+        draw.ellipse((right_x - r, inner_y + 8 - r, right_x + r, inner_y + 8 + r),
+                     fill=speaker_color)
+        draw.text((right_x + 16, inner_y + 8), f"{speaker_name}:",
+                  fill=speaker_color, font=self._font_lg, anchor="lm")
+        inner_y += 28
+        for wline in wrapped:
+            draw.text((right_x, inner_y), wline, fill=TEXT_WHITE, font=self._font_md)
             inner_y += line_h
 
-        # Speaker sprite at the bottom
+        # Speaker sprite at bottom of right panel
         speaker = state.players.get(speaker_id)
         if speaker:
-            sp_x = w // 2
-            sp_y = h - 35
+            sp_x = right_x + msg_max_w // 2
+            sp_y = h - 40
             sprite = self.sprites.get_sprite(speaker_id, "idle", scale=3)
             sw, sh = sprite.size
             img.paste(sprite, (sp_x - sw // 2, sp_y - sh // 2), sprite)
-            draw.text((sp_x, sp_y - sh // 2 - 6), f"{speaker_name} speaking",
+            draw.text((sp_x, sp_y - sh // 2 - 8), f"{speaker_name} speaking",
                       fill=speaker_color, font=self._font_md, anchor="mb")
 
         return img
@@ -1204,10 +1313,10 @@ class MapRenderer:
         self, state: GameState, votes: dict[str, str | None],
         ejected_id: str | None, tick: int,
     ) -> Image.Image:
-        """Render the vote result frame with tally bars."""
+        """Render the vote result frame with tally bars (1280x720)."""
         from collections import Counter
 
-        w, h = 900, 550
+        w, h = 1280, 720
         img = Image.new("RGB", (w, h), (20, 22, 32))
         draw = ImageDraw.Draw(img)
 

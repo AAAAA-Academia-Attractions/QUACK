@@ -64,14 +64,27 @@ STRATEGY GUIDE (Duck / Impostor):
 Your primary goal is to eliminate Geese until Ducks have voting majority.
 
 [During Free Roam]
-- At the start, look for isolated players to kill — Geese tend to buddy up quickly, \
+- After killing someone, IMMEDIATELY move to a different room. Never stay in the room \
+where you killed. The further away you are when the body is found, the safer you are.
+- At the start, look for isolated players to kill. Geese tend to buddy up quickly, \
 so early kills on lone players are easiest.
 - If you have a Duck teammate, find them and travel together. When you encounter a \
 similar-sized group of Geese, strike decisively with your teammate (double kill).
 - Be decisive when killing — hesitation gets you caught. If you see a good opportunity, \
 take it.
-- Move through rooms doing (or pretending to do) tasks to build an alibi route.
-- After a kill, leave the area quickly. Don't linger near bodies.
+- You don't have real tasks. You can use do_task() to fake doing tasks — this builds \
+your alibi, but don't waste too much time on it. Prioritize hunting targets.
+- Move through rooms to build a plausible route you can describe in meetings.
+
+[Reporting Bodies — Strategic Decision]
+- Generally, do NOT report bodies, especially ones you killed. Leave the area and \
+let a Goose find it — reporters are always suspects.
+- EXCEPTION: If you walk into a room containing a body AND a Goose is right there \
+with you, it may be SMARTER to report it. The Goose witness can vouch that you \
+reported immediately upon seeing it, making you look innocent. Failing to report \
+when a Goose is watching would look extremely suspicious.
+- Think carefully: who is watching? If no one sees you near the body, leave silently. \
+If someone is with you, reporting can clear your name.
 
 [During Discussion]
 - Build your cover story: describe your route, mention rooms you visited, claim you \
@@ -96,7 +109,9 @@ teammate's route, victim's identity if you know it.
 - Coordinate with your teammate subtly — if you can both vote the same Goose, do it.
 - Only skip if skipping serves you better than a wrong vote.
 
-CRITICAL RULE: Never reveal that you are a Duck. Never break character.
+CRITICAL RULES:
+1. Never reveal that you are a Duck. Never break character.
+2. Never stay near a body you created. Move away immediately after killing.
 """
 
 
@@ -110,6 +125,7 @@ def build_system_prompt(
     total_ducks: int = 0,
     teammates: list[str] | None = None,
     all_players: list[str] | None = None,
+    speak_chinese: bool = False,
 ) -> str:
     """Build the full system prompt with role info, rules, and strategy."""
 
@@ -145,10 +161,10 @@ def build_system_prompt(
         f"- Geese win by completing all tasks OR voting out all Ducks.\n"
         f"- Ducks win when they reach voting majority (Ducks ≥ Geese).\n\n"
         f"YOUR VISION: You receive two images each tick:\n"
-        f"1. A global map showing rooms you've visited (fog on unvisited areas) and "
-        f"task locations.\n"
-        f"2. A local view showing your immediate surroundings, nearby players, and "
-        f"bodies.\n\n"
+        f"1. A global map showing the ship's room layout and your task locations "
+        f"(marked with your color). You CANNOT see other players on this map.\n"
+        f"2. A local view showing ONLY your current room and its immediate "
+        f"surroundings — players and bodies you can actually see right now.\n\n"
         f"{strategy}\n"
         f"RESPONSE FORMAT:\n"
         f"- For actions: respond with EXACTLY one action from the available list "
@@ -157,6 +173,13 @@ def build_system_prompt(
         f"speak in a meeting. Stay in character.\n"
         f"- For voting: respond with EXACTLY a player name to vote for, or 'skip' "
         f"to abstain. Just the name or 'skip', nothing else.\n"
+        + (
+            "\nLANGUAGE REQUIREMENT: During discussion, you MUST speak in Simplified "
+            "Chinese (简体中文), NOT Traditional Chinese (繁體中文). All your meeting "
+            "speeches must be in 简体中文. Actions and votes should still use the "
+            "English format (e.g. 'move(medbay)', player names).\n"
+            if speak_chinese else ""
+        )
     )
 
 
@@ -249,6 +272,17 @@ def build_discussion_prompt(
     dead = observation.get("dead_players", [])
     if dead:
         lines.append(f"Currently dead: {', '.join(dead)}")
+
+    if observation.get("you_are_reporter") and observation.get("body_info"):
+        lines.append("")
+        lines.append("=== YOU ARE THE REPORTER (you called this meeting) ===")
+        lines.append("The actual body locations (truth — you may choose to lie):")
+        for info in observation["body_info"]:
+            room = info.get("room", "?")
+            victims = ", ".join(info.get("victims", []))
+            lines.append(f"  - {room}: {victims}")
+        lines.append("Describe what you found. Include the body location in your speech.")
+        lines.append("(If you are a Duck, you may lie about the room or other details.)")
 
     lines.append("")
     history = observation.get("discussion_history", [])

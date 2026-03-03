@@ -63,7 +63,10 @@ def create_random_agents(num_players: int) -> dict[str, BaseAgent]:
     return agents
 
 
-def create_vlm_agents(num_players: int, api_key: str, base_url: str, model: str) -> dict[str, BaseAgent]:
+def create_vlm_agents(
+    num_players: int, api_key: str, base_url: str, model: str,
+    speak_chinese: bool = False,
+) -> dict[str, BaseAgent]:
     from ggd_ai.agents.vlm_agent import VLMAgent
 
     agents: dict[str, BaseAgent] = {}
@@ -76,6 +79,7 @@ def create_vlm_agents(num_players: int, api_key: str, base_url: str, model: str)
             api_key=api_key,
             base_url=base_url,
             model=model,
+            speak_chinese=speak_chinese,
         )
     return agents
 
@@ -90,6 +94,7 @@ async def run_game(
     api_key: str = "",
     base_url: str = "https://endpoint.greatrouter.com",
     model: str = "gpt-5.2",
+    speak_chinese: bool = False,
 ) -> None:
     if seed is not None:
         random.seed(seed)
@@ -106,7 +111,7 @@ async def run_game(
 
     if vlm:
         print(f"Creating {num_players} VLM agents (model: {model})...")
-        agents = create_vlm_agents(num_players, api_key, base_url, model)
+        agents = create_vlm_agents(num_players, api_key, base_url, model, speak_chinese)
     else:
         agents = create_random_agents(num_players)
 
@@ -312,6 +317,11 @@ def main() -> None:
         help="Model name for VLM agents",
     )
     parser.add_argument(
+        "--chinese",
+        action="store_true",
+        help="Make all agent speeches in Chinese (中文)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -346,6 +356,7 @@ def main() -> None:
         api_key=api_key,
         base_url=args.base_url,
         model=args.model,
+        speak_chinese=args.chinese,
     ))
 
 

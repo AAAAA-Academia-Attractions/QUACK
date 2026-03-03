@@ -44,7 +44,7 @@ class MeetingSystem:
         self._start_meeting(
             state,
             caller=reporter.player_id,
-            reason=f"{reporter.name} reported body of {', '.join(body_names)} in {reporter.current_room}",
+            reason=f"{reporter.name} reported a dead body",
             event_type=EventType.BODY_REPORTED,
         )
         return True
@@ -84,14 +84,21 @@ class MeetingSystem:
                 p.moving_to = ""
                 p.move_ticks_remaining = 0
 
-        alive_ids = state.alive_player_ids
-        random.shuffle(alive_ids)
-        state.discussion_order = alive_ids
+        alive_ids = list(state.alive_player_ids)
+        rest = [p for p in alive_ids if p != caller]
+        random.shuffle(rest)
+        state.discussion_order = [caller] + rest
         state.current_speaker_idx = 0
 
+        bodies_data = []
+        for b in state.bodies:
+            bodies_data.append({
+                "room": b.room,
+                "victim_name": state.players[b.player_id].name,
+            })
         self.event_bus.emit(GameEvent(
             event_type=event_type,
-            data={"caller": caller, "reason": reason},
+            data={"caller": caller, "reason": reason, "bodies": bodies_data},
             tick=state.current_tick,
         ))
         self.event_bus.emit(GameEvent(

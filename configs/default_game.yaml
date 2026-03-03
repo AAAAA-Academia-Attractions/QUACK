@@ -17,5 +17,5 @@ meeting:
   emergency_meetings_per_player: 1
 
 vision:
-  visibility_range: 1  # rooms within N hops are visible
-  fog_memory_ticks: 0   # instantaneous vision only, no fog memory
+  visibility_range: 0  # 0 = current room only (same room vision)
+  fog_memory_ticks: 0  # instantaneous vision only, no fog memory
