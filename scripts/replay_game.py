@@ -93,7 +93,9 @@ def apply_event(state: GameState, event: dict[str, Any], event_log: list[str]) -
     if et == "tick_start":
         state.current_tick = data.get("tick", tick)
         state.phase = GamePhase.FREE_ROAM
-        # Tick down kill cooldowns
+        # Reset per-tick free-roam chat and tick down kill cooldowns
+        if hasattr(state, "room_messages"):
+            state.room_messages.clear()
         for p in state.alive_players:
             if p.team == Team.DUCK and p.kill_cooldown > 0:
                 p.kill_cooldown -= 1
@@ -153,6 +155,20 @@ def apply_event(state: GameState, event: dict[str, Any], event_log: list[str]) -
                 p.moving_to = ""
                 p.move_ticks_remaining = 0
         event_log.append(f"[T{tick}] MEETING: {data.get('reason', '')}")
+
+    elif et == "free_roam_chat":
+        # Rebuild room_messages so god-view chat bubbles work in replay.
+        room = data.get("room", "")
+        if hasattr(state, "room_messages") and room:
+            msgs = state.room_messages.setdefault(room, [])
+            msgs.append({
+                "player_id": data.get("player_id", ""),
+                "name": data.get("name", ""),
+                "room": room,
+                "message": data.get("message", ""),
+                "tick": tick,
+            })
+        event_log.append(f"[T{tick}] CHAT in {data.get('room', '?')}: {data.get('name', '')} said \"{data.get('message', '')}\"")
 
     elif et == "discussion_message":
         state.discussion_messages.append({

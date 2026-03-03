@@ -153,12 +153,17 @@ class VLMAgent(BaseAgent):
         """Record tick observation into memory."""
         players_seen = [p["name"] for p in observation.get("visible_players", [])]
         bodies_seen = [b["name"] for b in observation.get("visible_bodies", [])]
+        room_chat = [
+            f"{msg.get('name', '?')}: {msg.get('message', '')}"
+            for msg in observation.get("room_chat", [])
+        ]
         self.memory.record_tick(
             tick=observation.get("tick", 0),
             room=observation.get("current_room", "?"),
             action="",
             players_seen=players_seen,
             bodies_seen=bodies_seen,
+            chats_heard=room_chat,
             in_transit=observation.get("in_transit", False),
             moving_to=observation.get("moving_to", ""),
         )

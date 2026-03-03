@@ -149,4 +149,6 @@ class VisionSystem:
                 "progress": f"{current_task.ticks_done}/{current_task.ticks_required}",
             } if current_task else None,
             "kill_cooldown": player.kill_cooldown if player.team.value == "duck" else None,
+            # Free-roam chat messages spoken in this room (most recent tick).
+            "room_chat": list(getattr(state, "room_messages", {}).get(player.current_room, [])),
         }

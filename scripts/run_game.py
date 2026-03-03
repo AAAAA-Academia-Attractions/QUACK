@@ -152,6 +152,14 @@ async def run_game(
                 tick = engine.state.current_tick
                 if tick % 5 == 0:
                     print(f"  Tick {tick}...")
+                # Print any free-roam chat messages spoken this tick
+                for msgs in engine.state.room_messages.values():
+                    for msg in msgs:
+                        if msg.get("tick") == tick:
+                            room = msg.get("room", "?")
+                            name = msg.get("name", "?")
+                            text = msg.get("message", "")
+                            print(f"  [CHAT][{room}] {name}: {text}")
 
         elif engine.state.phase.value == "discussion":
             if (god_view and engine.renderer

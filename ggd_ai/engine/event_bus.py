@@ -14,6 +14,7 @@ class EventType(Enum):
     TICK_END = "tick_end"
     PLAYER_MOVED = "player_moved"
     PLAYER_KILLED = "player_killed"
+    FREE_ROAM_CHAT = "free_roam_chat"
     BODY_REPORTED = "body_reported"
     MEETING_CALLED = "meeting_called"
     DISCUSSION_MESSAGE = "discussion_message"

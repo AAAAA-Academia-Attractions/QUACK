@@ -134,6 +134,7 @@ FREE_ROAM ──→ MEETING_CALLED ──→ DISCUSSION ──→ VOTING ──�
    - `call_meeting()` — press the emergency button (cafeteria only, limited uses)
    - `kill(target_id)` — *Duck only* — kill a player in the same room
    - `wait()` — do nothing
+   - **Optional chat** — with any action, an agent may append `| say(message)` to speak to players in the **same room** during Free Roam (e.g. `move(weapons) | say(I saw a body in storage)`).
 
 2. **Discussion** — The player who reported the body or pressed the emergency button speaks **first**. Remaining players speak in random order. Up to 2 rounds (each player speaks twice max). Body location is only revealed by the reporter's speech — Ducks may lie about it; the God view shows the actual locations so observers can spot lies.
 
@@ -145,6 +146,7 @@ FREE_ROAM ──→ MEETING_CALLED ──→ DISCUSSION ──→ VOTING ──�
 
 - **Caller speaks first**: On body report or emergency meeting, the reporter/caller speaks first. Other players follow in random order.
 - **Body location from reporter only**: The meeting reason does not reveal body location — only the first speaker (the reporter) describes it. Ducks can lie about location; God view displays actual locations for observers.
+- **Free-roam chat**: During Free Roam, agents may attach `| say(message)` to any action to broadcast a short message to players in the **same room only**. Messages are not heard by players in other rooms or in corridors.
 - **Weighted corridors**: Moving between rooms takes a variable number of ticks (1–3). Agents must plan routes efficiently.
 - **Random spawns**: Players start in random rooms and are re-randomized after each meeting.
 - **Emergency bell limit**: The total number of emergency meetings (bell pulls) per game equals the number of Ducks. Body reports are unlimited.
@@ -179,12 +181,12 @@ Each VLM agent (powered by gpt-5.2 via OpenAI-compatible API) has:
 
 1. **Global map** — Shows the full ship layout with all rooms and corridors. The agent's task locations are marked with their color. **No other players are visible** on this map — only the room structure and the agent's own position.
 
-2. **Local view** — A zoomed-in view of the agent's current room only. Shows players and bodies the agent can actually see right now (same-room only).
+2. **Local view** — A zoomed-in view of the agent's current room or corridor position. Shows players and bodies the agent can actually see right now (same-room only when in a room; same-corridor only when in transit).
 
 ### Memory System
 
 Each agent maintains structured memory across the game:
-- **Tick history**: room visited, action taken, players seen, bodies found
+- **Tick history**: room or corridor position, action taken, players seen, bodies found, free-roam chats heard
 - **Encounter log**: who was seen, where, when
 - **Meeting history**: what was discussed, who was ejected
 - **Route description**: path taken since last meeting (for discussion)
@@ -227,11 +229,12 @@ An all-seeing overhead view for human observers and debugging:
 - **All players** shown with pixel sprites and role labels (Goose/Duck)
 - **Vision halos** — colored overlay showing each player's current vision
 - **Action annotations** — last action per player, color-coded (gray=move, green=task, red=kill)
-- **Right panel** — player roster, event log
+- **Right panel** — player roster, event log (includes kills, meetings, and free-roam chat lines)
 - **Per-player POV row** — single horizontal row of every player's first-person local view below the main map (keeps video landscape)
 - **Meeting frames** (1280×720) — dedicated frames for meeting calls, speeches, and vote results:
   - Two-panel layout: past speeches on left, current speaker's full message on right (readable fonts)
   - **Actual body locations** banner during discussion — shows the truth so you can see if the reporter (e.g. a Duck) is lying
+- **Free-roam chat bubbles** — when players use `say(...)` during Free Roam, their latest message in that tick is rendered as a small text bubble under their character.
 
 ### Viewing as Video
 
@@ -280,6 +283,7 @@ The `game_started` event contains the full initial state (roles, rooms, tasks) e
 | `vote_skipped` | `reason` |
 | `task_progress` | `player_id`, `task_name`, `ticks_done` |
 | `task_completed` | `player_id`, `task_name`, `room` |
+| `free_roam_chat` | `player_id`, `name`, `room`, `message` |
 | `phase_changed` | `phase` |
 | `game_over` | `winner`, `reason` |
 

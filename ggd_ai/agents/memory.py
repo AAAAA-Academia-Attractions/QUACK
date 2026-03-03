@@ -18,6 +18,7 @@ class TickMemory:
     action: str = ""
     players_seen: list[str] = field(default_factory=list)
     bodies_seen: list[str] = field(default_factory=list)
+    chats_heard: list[str] = field(default_factory=list)
     in_transit: bool = False
     moving_to: str = ""
 
@@ -50,15 +51,19 @@ class AgentMemory:
         action: str,
         players_seen: list[str],
         bodies_seen: list[str],
+        chats_heard: list[str] | None = None,
         in_transit: bool = False,
         moving_to: str = "",
     ) -> None:
+        if chats_heard is None:
+            chats_heard = []
         self.tick_history.append(TickMemory(
             tick=tick,
             room=room,
             action=action,
             players_seen=players_seen,
             bodies_seen=bodies_seen,
+            chats_heard=list(chats_heard),
             in_transit=in_transit,
             moving_to=moving_to,
         ))

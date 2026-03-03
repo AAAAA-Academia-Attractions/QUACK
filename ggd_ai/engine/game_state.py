@@ -89,6 +89,9 @@ class GameState:
     phase: GamePhase = GamePhase.LOBBY
     current_tick: int = 0
     bodies: list[Body] = field(default_factory=list)
+    # Free-roam chat: messages spoken during the current tick, grouped by room.
+    # Reset at the start of each free-roam tick.
+    room_messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     max_ticks: int = 200
 
     # Meeting state

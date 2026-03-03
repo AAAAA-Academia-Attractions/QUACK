@@ -168,7 +168,10 @@ def build_system_prompt(
         f"{strategy}\n"
         f"RESPONSE FORMAT:\n"
         f"- For actions: respond with EXACTLY one action from the available list "
-        f"(e.g. 'move(medbay)'). Just the action, nothing else.\n"
+        f"(e.g. 'move(medbay)'). You may optionally append a free-roam chat using "
+        f\"' | say(your message)' to speak to players in your CURRENT ROOM only. "
+        f\"Examples: 'move(medbay)', 'do_task()', \"\n"
+        f\"  or 'move(medbay) | say(I saw a body in storage)'.\n"
         f"- For discussion: respond with natural language as your character would "
         f"speak in a meeting. Stay in character.\n"
         f"- For voting: respond with EXACTLY a player name to vote for, or 'skip' "
@@ -220,6 +223,15 @@ def build_action_prompt(
         body_strs = [f"{b['name']} (in {b['room']})" for b in bodies]
         lines.append(f"⚠ BODIES FOUND: {', '.join(body_strs)}")
 
+    room_chat = observation.get("room_chat", [])
+    if room_chat:
+        lines.append("")
+        lines.append("=== RECENT CHAT IN THIS ROOM (free roam) ===")
+        for msg in room_chat[-5:]:
+            speaker = msg.get("name", "?")
+            text = msg.get("message", "")
+            lines.append(f"  {speaker}: \"{text}\"")
+
     lines.append("")
     lines.append("=== YOUR TASKS ===")
     tasks = observation.get("tasks", [])
@@ -254,7 +266,12 @@ def build_action_prompt(
         lines.append(f"  {i}. {action}")
 
     lines.append("")
-    lines.append("Choose ONE action. Respond with just the action (e.g. 'move(medbay)').")
+    lines.append(
+        "Choose ONE action. Respond with just the action (e.g. 'move(medbay)'). "
+        "If you also want to speak to players in your CURRENT ROOM during Free Roam, "
+        "append \" | say(your message)\". Example: "
+        "'move(medbay) | say(I saw a body in storage)'."
+    )
     return "\n".join(lines)
 
 

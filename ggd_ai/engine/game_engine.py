@@ -258,6 +258,8 @@ class GameEngine:
 
     async def _run_free_roam_tick(self) -> None:
         self.state.current_tick += 1
+        # Reset per-tick free-roam chat messages.
+        self.state.room_messages.clear()
         self.event_bus.emit(GameEvent(
             event_type=EventType.TICK_START,
             data={"tick": self.state.current_tick},
@@ -294,11 +296,42 @@ class GameEngine:
             available_actions = self._get_available_actions(player)
             observation["available_actions"] = available_actions
 
-            action = await agent.choose_action(observation, self.state.phase.value)
-            self._execute_action(player, action)
+            raw_action = await agent.choose_action(observation, self.state.phase.value)
+
+            # Parse optional free-roam chat: \"action | say(message)\".
+            room_before = player.current_room
+            say_message = ""
+            action_str = raw_action
+            if isinstance(raw_action, str):
+                parts = raw_action.split("|", 1)
+                action_str = parts[0].strip() or "wait()"
+                if len(parts) > 1:
+                    suffix = parts[1].strip()
+                    lower = suffix.lower()
+                    if lower.startswith("say(") and suffix.endswith(")"):
+                        say_message = suffix[4:-1].strip()
+
+            self._execute_action(player, action_str)
+
+            # Record chat in the origin room so only players who were there can hear it.
+            if say_message:
+                msgs = self.state.room_messages.setdefault(room_before, [])
+                entry = {
+                    "player_id": player.player_id,
+                    "name": player.name,
+                    "room": room_before,
+                    "message": say_message,
+                    "tick": self.state.current_tick,
+                }
+                msgs.append(entry)
+                self.event_bus.emit(GameEvent(
+                    event_type=EventType.FREE_ROAM_CHAT,
+                    data=entry,
+                    tick=self.state.current_tick,
+                ))
 
             if self.renderer:
-                self.renderer.last_actions[pid] = action
+                self.renderer.last_actions[pid] = action_str
 
         if self.state.phase == GamePhase.FREE_ROAM:
             self.event_bus.emit(GameEvent(
@@ -626,6 +659,10 @@ class GameEngine:
         elif t == EventType.TASK_COMPLETED:
             self._event_log.append(
                 f"[T{event.tick}] {_name(d['player_id'])} completed '{d['task_name']}'")
+        elif t == EventType.FREE_ROAM_CHAT:
+            self._event_log.append(
+                f"[T{event.tick}] CHAT in {d.get('room', '?')}: {_name(d.get('player_id', ''))} said \"{d.get('message', '')}\""
+            )
         elif t == EventType.PLAYER_EJECTED:
             self._event_log.append(
                 f"[T{event.tick}] {d['name']} EJECTED ({d['role']}/{d['team']})")

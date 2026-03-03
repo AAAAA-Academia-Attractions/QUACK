@@ -526,8 +526,27 @@ class MapRenderer:
         self._draw_players_local(img, draw, scale, state, visible_players, player)
         self._draw_viewer_local(img, draw, scale, player)
 
-        center_room = self.game_map.rooms[player.current_room]
-        view_cx, view_cy = self._room_center(center_room, scale)
+        # Compute camera center: in a room it is the room center; in transit,
+        # it is a point along the corridor between current_room and moving_to.
+        if player.is_in_transit and player.moving_to:
+            room_a = self.game_map.rooms.get(player.current_room)
+            room_b = self.game_map.rooms.get(player.moving_to)
+            if room_a and room_b:
+                ca = self._room_center(room_a, scale)
+                cb = self._room_center(room_b, scale)
+                weight = self.game_map.get_corridor_weight(player.current_room, player.moving_to)
+                total = max(1, weight)
+                traveled = weight - player.move_ticks_remaining
+                progress = traveled / total if total > 0 else 0.5
+                progress = max(0.2, min(0.8, progress))
+                view_cx = int(ca[0] + (cb[0] - ca[0]) * progress)
+                view_cy = int(ca[1] + (cb[1] - ca[1]) * progress)
+            else:
+                center_room = self.game_map.rooms[player.current_room]
+                view_cx, view_cy = self._room_center(center_room, scale)
+        else:
+            center_room = self.game_map.rooms[player.current_room]
+            view_cx, view_cy = self._room_center(center_room, scale)
         crop_half = 320
         left = max(0, view_cx - crop_half)
         top = max(0, view_cy - crop_half)
@@ -667,6 +686,33 @@ class MapRenderer:
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, state: GameState,
         visible_ids: list[str], viewer: Player,
     ) -> None:
+        # If the viewer is in transit, show other visible players as being in
+        # the corridor as well (not snapped to room centers).
+        if viewer.is_in_transit and viewer.moving_to:
+            for pid in visible_ids:
+                p = state.players.get(pid)
+                if not p or not p.is_alive or pid == viewer.player_id:
+                    continue
+                room_a = self.game_map.rooms.get(p.current_room)
+                room_b = self.game_map.rooms.get(p.moving_to)
+                if not room_a or not room_b:
+                    continue
+                ca = self._room_center(room_a, scale)
+                cb = self._room_center(room_b, scale)
+                weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
+                total = max(1, weight)
+                traveled = weight - p.move_ticks_remaining
+                progress = traveled / total if total > 0 else 0.5
+                progress = max(0.2, min(0.8, progress))
+                px = int(ca[0] + (cb[0] - ca[0]) * progress)
+                py = int(ca[1] + (cb[1] - ca[1]) * progress)
+                name = self._get_player_name(pid)
+                self._paste_sprite(img, pid, px, py, scale=3)
+                draw.text((px, py - 40), name, fill=TEXT_WHITE,
+                          font=self._font_md, anchor="mb")
+            return
+
+        # Viewer is in a room: draw other visible players grouped by room.
         room_players: dict[str, list[str]] = {}
         for pid in visible_ids:
             p = state.players.get(pid)
@@ -693,9 +739,25 @@ class MapRenderer:
     def _draw_viewer_local(
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, player: Player,
     ) -> None:
-        room = self.game_map.rooms[player.current_room]
-        cx, cy = self._room_center(room, scale)
-        cy += 24
+        # If moving, draw the viewer inside the corridor; otherwise at room center.
+        if player.is_in_transit and player.moving_to:
+            room_a = self.game_map.rooms.get(player.current_room)
+            room_b = self.game_map.rooms.get(player.moving_to)
+            if not room_a or not room_b:
+                return
+            ca = self._room_center(room_a, scale)
+            cb = self._room_center(room_b, scale)
+            weight = self.game_map.get_corridor_weight(player.current_room, player.moving_to)
+            total = max(1, weight)
+            traveled = weight - player.move_ticks_remaining
+            progress = traveled / total if total > 0 else 0.5
+            progress = max(0.2, min(0.8, progress))
+            cx = int(ca[0] + (cb[0] - ca[0]) * progress)
+            cy = int(ca[1] + (cb[1] - ca[1]) * progress)
+        else:
+            room = self.game_map.rooms[player.current_room]
+            cx, cy = self._room_center(room, scale)
+            cy += 24
 
         # Highlight ring
         r = 30
@@ -811,8 +873,15 @@ class MapRenderer:
         all_body_ids = [b.player_id for b in state.bodies]
         self._draw_body_markers(img, draw, scale, state, all_body_ids, map_y)
 
-        # Draw all players with role labels
-        self._god_draw_all_players(img, draw, scale, state, map_y)
+        # Build per-player chat map for this tick (free-roam chat)
+        chat_by_player: dict[str, str] = {}
+        for msgs in getattr(state, "room_messages", {}).values():
+            for msg in msgs:
+                if msg.get("tick") == tick and msg.get("player_id"):
+                    chat_by_player[msg["player_id"]] = msg.get("message", "")
+
+        # Draw all players with role labels and any chat bubbles
+        self._god_draw_all_players(img, draw, scale, state, map_y, chat_by_player)
 
         # Right panel: player list + event log
         self._god_draw_panel(draw, map_w, 0, panel_w, top_h, state, event_log)
@@ -949,8 +1018,10 @@ class MapRenderer:
     def _god_draw_all_players(
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float,
         state: GameState, offset_y: int,
+        chat_by_player: dict[str, str] | None = None,
     ) -> None:
-        """Draw all players (alive and dead) with role labels and action annotations."""
+        """Draw all players (alive and dead) with role labels, action annotations,
+        and optional chat bubbles for players who spoke this tick."""
         from ggd_ai.engine.game_state import Team
 
         # Stationary alive players
@@ -970,7 +1041,9 @@ class MapRenderer:
             for i, pid in enumerate(pids):
                 px = start_x + i * spacing
                 py = cy + 4
-                self._god_draw_single_player(img, draw, px, py, pid, state, scale)
+                self._god_draw_single_player(
+                    img, draw, px, py, pid, state, scale, chat_by_player,
+                )
 
         # In-transit players — draw on corridor
         for p in state.alive_players:
@@ -1012,6 +1085,7 @@ class MapRenderer:
     def _god_draw_single_player(
         self, img: Image.Image, draw: ImageDraw.Draw,
         px: int, py: int, pid: str, state: GameState, scale: float,
+        chat_by_player: dict[str, str] | None = None,
     ) -> None:
         from ggd_ai.engine.game_state import Team
 
@@ -1029,6 +1103,7 @@ class MapRenderer:
                   fill=role_color, font=self._font_sm, anchor="mt")
 
         action = self.last_actions.get(pid, "")
+        label_y = py + int(38 * scale)
         if action:
             action_short = action[:20]
             acolor = GOD_EVENT_MOVE_COLOR
@@ -1036,8 +1111,35 @@ class MapRenderer:
                 acolor = GOD_EVENT_KILL_COLOR
             elif "task" in action:
                 acolor = GOD_EVENT_TASK_COLOR
-            draw.text((px, py + int(38 * scale)), action_short,
+            draw.text((px, label_y), action_short,
                       fill=acolor, font=self._font_sm, anchor="mt")
+            label_y += int(16 * scale)
+
+        # Optional chat bubble (truncate for readability)
+        if chat_by_player and pid in chat_by_player:
+            msg = chat_by_player[pid]
+            msg_short = (msg[:26] + "…") if len(msg) > 26 else msg
+            bubble_pad_x = int(4 * scale)
+            bubble_pad_y = int(2 * scale)
+            bbox = draw.textbbox((0, 0), msg_short, font=self._font_sm)
+            bw = bbox[2] - bbox[0] + 2 * bubble_pad_x
+            bh = bbox[3] - bbox[1] + 2 * bubble_pad_y
+            bx = px - bw // 2
+            by = label_y - bh // 2
+            draw.rounded_rectangle(
+                (bx, by, bx + bw, by + bh),
+                radius=int(6 * scale),
+                fill=(20, 30, 40),
+                outline=GOD_PANEL_BORDER,
+                width=1,
+            )
+            draw.text(
+                (px, label_y),
+                msg_short,
+                fill=TEXT_LIGHT,
+                font=self._font_sm,
+                anchor="mm",
+            )
 
     def _god_draw_panel(
         self, draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
