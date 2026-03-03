@@ -234,7 +234,9 @@ class MapRenderer:
 
                 both_visible = room_name in revealed and neighbor in revealed
                 color = CORRIDOR_COLOR if both_visible else CORRIDOR_COLOR_DIM
-                draw.line([ca, cb], fill=color, width=max(2, int(5 * scale)))
+                # Draw corridors a bit thicker so in-transit players clearly
+                # appear "in the hallway" instead of overlapping rooms.
+                draw.line([ca, cb], fill=color, width=max(4, int(9 * scale)))
 
                 # Weight label at midpoint
                 w = self.game_map.get_corridor_weight(room_name, neighbor)
@@ -397,9 +399,10 @@ class MapRenderer:
             cb = (cb[0], cb[1] + offset_y)
 
             weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
-            total = max(1, weight - 1)
-            progress = 1.0 - (p.move_ticks_remaining / total) if total > 0 else 1.0
-            progress = max(0.1, min(0.9, progress))
+            total = max(1, weight)
+            traveled = weight - p.move_ticks_remaining
+            progress = traveled / total if total > 0 else 0.5
+            progress = max(0.2, min(0.8, progress))
 
             px = int(ca[0] + (cb[0] - ca[0]) * progress)
             py = int(ca[1] + (cb[1] - ca[1]) * progress)
@@ -564,7 +567,9 @@ class MapRenderer:
                 cb = self._room_center(room_b, scale)
                 both = room_name in visible and neighbor in visible
                 color = CORRIDOR_COLOR if both else CORRIDOR_COLOR_DIM
-                draw.line([ca, cb], fill=color, width=max(3, int(6 * scale)))
+                # Thicker corridors in local view so moving players sit clearly
+                # in the hallway space.
+                draw.line([ca, cb], fill=color, width=max(5, int(10 * scale)))
 
                 w = self.game_map.get_corridor_weight(room_name, neighbor)
                 if w > 1 and both:
@@ -980,9 +985,16 @@ class MapRenderer:
             ca = (ca[0], ca[1] + offset_y)
             cb = (cb[0], cb[1] + offset_y)
 
+            # Position in-transit players clearly inside the corridor.
+            # Use the full edge weight as the travel length so that as soon
+            # as movement starts they appear slightly away from the room,
+            # and never exactly on top of either room center.
             weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
-            total = max(1, weight - 1)
-            progress = max(0.1, min(0.9, 1.0 - p.move_ticks_remaining / total))
+            total = max(1, weight)
+            traveled = weight - p.move_ticks_remaining
+            progress = traveled / total if total > 0 else 0.5
+            progress = max(0.2, min(0.8, progress))
+
             px = int(ca[0] + (cb[0] - ca[0]) * progress)
             py = int(ca[1] + (cb[1] - ca[1]) * progress)
 

@@ -60,7 +60,7 @@ class VisionSystem:
                 continue
 
             if player.is_in_transit:
-                # In a corridor: can see others in the same corridor
+                # 在走廊中：只能看到同一个走廊里的其他“正在移动的人”
                 if (p.is_in_transit
                         and p.current_room == player.current_room
                         and p.moving_to == player.moving_to):
@@ -70,8 +70,8 @@ class VisionSystem:
                         and p.moving_to == player.current_room):
                     visible_players.append(p.player_id)
             else:
-                # In a room: can only see others in the same room (not in transit)
-                if not p.is_in_transit and p.current_room == current_room:
+                # 在房间里：只能看到同一个房间、并且不在走廊中的玩家
+                if (not p.is_in_transit) and p.current_room == current_room:
                     visible_players.append(p.player_id)
 
         visible_bodies = [
