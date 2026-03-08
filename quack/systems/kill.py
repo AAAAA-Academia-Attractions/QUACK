@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ggd_ai.engine.event_bus import EventBus, EventType, GameEvent
-from ggd_ai.engine.game_state import Body, Team
+from quack.engine.event_bus import EventBus, EventType, GameEvent
+from quack.engine.game_state import Body, Team
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
+    from quack.engine.game_state import GameState, Player
 
 
 class KillSystem:

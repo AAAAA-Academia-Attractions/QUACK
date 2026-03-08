@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ggd_ai.engine.game_state import Team
-from ggd_ai.roles.base_role import BaseRole
+from quack.engine.game_state import Team
+from quack.roles.base_role import BaseRole
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
+    from quack.engine.game_state import GameState, Player
 
 
 class Duck(BaseRole):

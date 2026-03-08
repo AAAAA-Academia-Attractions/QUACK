@@ -5,12 +5,12 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 
-from ggd_ai.engine.event_bus import EventBus, EventType, GameEvent
-from ggd_ai.engine.game_state import GamePhase
+from quack.engine.event_bus import EventBus, EventType, GameEvent
+from quack.engine.game_state import GamePhase
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
-    from ggd_ai.map.game_map import GameMap
+    from quack.engine.game_state import GameState, Player
+    from quack.map.game_map import GameMap
 
 
 class MeetingSystem:

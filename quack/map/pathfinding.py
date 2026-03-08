@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ggd_ai.map.game_map import GameMap
+from quack.map.game_map import GameMap
 
 
 def shortest_path(game_map: GameMap, start: str, end: str) -> list[str] | None:

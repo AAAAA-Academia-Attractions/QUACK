@@ -8,7 +8,7 @@ from typing import Any
 
 from PIL import Image
 
-from ggd_ai.agents.memory import AgentMemory
+from quack.agents.memory import AgentMemory
 
 
 def image_to_base64(img: Image.Image, fmt: str = "PNG") -> str:

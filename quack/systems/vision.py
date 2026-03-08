@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
-    from ggd_ai.map.game_map import GameMap
+    from quack.engine.game_state import GameState, Player
+    from quack.map.game_map import GameMap
 
 
 @dataclass

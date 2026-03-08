@@ -10,13 +10,13 @@ from typing import Any
 
 from PIL import Image
 
-from ggd_ai.agents.base_agent import BaseAgent
-from ggd_ai.agents.memory import AgentMemory
-from ggd_ai.agents.prompt_builder import (build_action_prompt,
-                                          build_discussion_prompt,
-                                          build_system_prompt,
-                                          build_vlm_messages,
-                                          build_vote_prompt)
+from quack.agents.base_agent import BaseAgent
+from quack.agents.memory import AgentMemory
+from quack.agents.prompt_builder import (build_action_prompt,
+                                         build_discussion_prompt,
+                                         build_system_prompt,
+                                         build_vlm_messages,
+                                         build_vote_prompt)
 
 logger = logging.getLogger(__name__)
 

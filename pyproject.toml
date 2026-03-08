@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ggd-ai"
+name = "quack"
 version = "0.1.0"
-description = "VLM Multi-Agent Social Deduction Environment based on Goose Goose Duck"
+description = "QUACK: A Multimodal Social Deduction Benchmark for Vision-Language Models"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["ggd_ai*"]
+include = ["quack*"]
 
 [tool.ruff]
 line-length = 100

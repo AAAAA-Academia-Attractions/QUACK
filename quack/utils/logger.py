@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ggd_ai.engine.event_bus import GameEvent
+from quack.engine.event_bus import GameEvent
 
 
 class GameLogger:

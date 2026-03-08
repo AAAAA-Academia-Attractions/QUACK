@@ -5,10 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from ggd_ai.engine.game_state import Team
+from quack.engine.game_state import Team
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
+    from quack.engine.game_state import GameState, Player
 
 
 class BaseRole(ABC):

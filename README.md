@@ -1,12 +1,20 @@
-# GGD-AI: VLM Multi-Agent Social Deduction Environment
+# QUACK: Questioning, Understanding, and Assessing Collaborative Knowledge
 
-A modular, extensible **Goose Goose Duck (鹅鸭杀)** multi-agent environment designed to benchmark **Vision-Language Model (VLM)** reasoning capabilities. Unlike Werewolf/Mafia-based benchmarks that only test LLM text reasoning, GGD-AI adds **spatial reasoning** through visual map observations, making it a more comprehensive test of VLM abilities.
+### A Multimodal Social Deduction Benchmark for Vision-Language Models
+
+Social deduction games are compelling testbeds for evaluating agents' theory of mind, deception, and social reasoning. Yet most existing benchmarks are *text-only*, preventing grounded verification of agents' claims against their actual behavior in partially observed environments.
+
+**QUACK** is the first *multimodal* social deduction benchmark designed for Vision-Language Models, built on a fully open-source engine for multimodal social deduction research. Agents navigate configurable graph-based map layouts with weighted corridors, operate under strict partial observability with same-room visibility, complete multi-tick location-bound tasks, and participate in emergency meetings with multi-round free-form discussion and voting. Each decision step provides a global map view, a local perceptual view, and structured textual state, requiring grounded multimodal reasoning over long-horizon episodes.
+
+Beyond environment design, QUACK introduces a structured evaluation protocol that measures task performance, social coordination, adversarial robustness, and behavioral linguistic consistency. We develop an automatic Statement Verification Pipeline that extracts spatial and behavioral claims from meeting utterances and validates them against engine-level ground-truth logs, enabling scalable auditing of deception, belief consistency, and action-speech alignment under partial observability.
+
+---
 
 ## Why This Project?
 
 Most existing social deduction agent benchmarks (Werewolf, Mafia, Avalon) are text-only — agents read and write natural language. This limits testing to LLM capabilities alone.
 
-GGD-AI introduces a **spatial dimension**: agents navigate a discrete map, have limited local vision, and receive rendered map images as input. This means VLM agents must:
+QUACK introduces a **spatial dimension**: agents navigate a discrete map, have limited local vision, and receive rendered map images as input. This means VLM agents must:
 
 1. **Read and interpret visual maps** — understand room layouts, task markers
 2. **Reason spatially** — plan movement routes based on weighted corridors, track encounters
@@ -20,7 +28,7 @@ GGD-AI introduces a **spatial dimension**: agents navigate a discrete map, have 
 ### Installation
 
 ```bash
-cd GGD-AI
+cd QUACK
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -206,7 +214,7 @@ API calls are globally rate-limited (1s minimum between calls) with automatic re
 
 ## Rendering & Visualization
 
-GGD-AI renders using **pixel-art style character sprites** with themed room interiors.
+QUACK renders using **pixel-art style character sprites** with themed room interiors.
 
 ### Per-Player Global Map
 
@@ -345,8 +353,8 @@ emergency_button: cafeteria
 ## Project Architecture
 
 ```
-GGD-AI/
-├── ggd_ai/
+QUACK/
+├── quack/
 │   ├── engine/
 │   │   ├── game_engine.py     # Main game loop, phase management, action dispatch
 │   │   ├── game_state.py      # Core data structures (Player, GameState, Body, etc.)
@@ -388,14 +396,3 @@ GGD-AI/
 ├── pyproject.toml
 └── README.md
 ```
-
----
-
-## Current Status
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1: Core Engine | Done | Game loop, state machine, events, roles, all systems |
-| Phase 2: Rendering | Done | Pixel sprites, themed rooms, global/local/god view, meeting frames |
-| Phase 3: VLM Agent | Done | gpt-5.2 agents with memory, strategy prompts, rate limiting, Chinese mode |
-| Replay System | Done | Reconstruct renders from game logs, video export |

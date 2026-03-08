@@ -13,10 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image, ImageDraw
 
-from ggd_ai.engine.game_state import GameState, Player, Team
-from ggd_ai.map.game_map import GameMap
-from ggd_ai.rendering.map_renderer import MapRenderer, _try_load_font
-from ggd_ai.utils.config import load_map_config
+from quack.engine.game_state import GameState, Player, Team
+from quack.map.game_map import GameMap
+from quack.rendering.map_renderer import MapRenderer, _try_load_font
+from quack.utils.config import load_map_config
 
 SAMPLES = ["测试中文", "简体中文显示正常", "我在餐厅发现了尸体。"]
 

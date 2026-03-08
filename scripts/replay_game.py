@@ -19,12 +19,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ggd_ai.engine.game_state import (Body, GamePhase, GameState, Player,
-                                      TaskProgress, Team)
-from ggd_ai.map.game_map import GameMap
-from ggd_ai.rendering.map_renderer import MapRenderer
-from ggd_ai.systems.vision import VisionSystem
-from ggd_ai.utils.config import load_map_config
+from quack.engine.game_state import (Body, GamePhase, GameState, Player,
+                                     TaskProgress, Team)
+from quack.map.game_map import GameMap
+from quack.rendering.map_renderer import MapRenderer
+from quack.systems.vision import VisionSystem
+from quack.utils.config import load_map_config
 
 
 def load_events(log_path: str) -> list[dict[str, Any]]:

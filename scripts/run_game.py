@@ -12,9 +12,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ggd_ai.agents.base_agent import BaseAgent
-from ggd_ai.engine.game_engine import GameEngine
-from ggd_ai.utils.logger import GameLogger
+from quack.agents.base_agent import BaseAgent
+from quack.engine.game_engine import GameEngine
+from quack.utils.logger import GameLogger
 
 
 class RandomAgent(BaseAgent):
@@ -67,7 +67,7 @@ def create_vlm_agents(
     num_players: int, api_key: str, base_url: str, model: str,
     speak_chinese: bool = False,
 ) -> dict[str, BaseAgent]:
-    from ggd_ai.agents.vlm_agent import VLMAgent
+    from quack.agents.vlm_agent import VLMAgent
 
     agents: dict[str, BaseAgent] = {}
     for i in range(num_players):

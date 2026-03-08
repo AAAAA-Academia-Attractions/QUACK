@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ggd_ai.rendering.colors import (BACKGROUND_COLOR, BODY_FILL, CELL_SIZE,
+from quack.rendering.colors import (BACKGROUND_COLOR, BODY_FILL, CELL_SIZE,
                                      CORRIDOR_COLOR, CORRIDOR_COLOR_DIM,
                                      EMERGENCY_BORDER, EMERGENCY_FILL,
                                      FOG_BORDER, FOG_FILL, FOG_LABEL_COLOR,
@@ -27,12 +27,12 @@ from ggd_ai.rendering.colors import (BACKGROUND_COLOR, BODY_FILL, CELL_SIZE,
                                      TASK_INCOMPLETE_BORDER,
                                      TASK_INCOMPLETE_FILL, TEXT_DIM,
                                      TEXT_LIGHT, TEXT_WHITE, VISION_HALO_ALPHA)
-from ggd_ai.rendering.room_decor import draw_room_decoration, get_room_fill
-from ggd_ai.rendering.sprites import SpriteSheet
+from quack.rendering.room_decor import draw_room_decoration, get_room_fill
+from quack.rendering.sprites import SpriteSheet
 
 if TYPE_CHECKING:
-    from ggd_ai.engine.game_state import GameState, Player
-    from ggd_ai.map.game_map import GameMap, Room
+    from quack.engine.game_state import GameState, Player
+    from quack.map.game_map import GameMap, Room
 
 
 _CHINESE_FONT_PATHS = [
@@ -200,7 +200,7 @@ class MapRenderer:
 
         if viewer:
             completed, total = 0, 0
-            from ggd_ai.engine.game_state import Team
+            from quack.engine.game_state import Team
             for p in state.players.values():
                 if p.team == Team.GOOSE:
                     for t in p.tasks:
@@ -837,7 +837,7 @@ class MapRenderer:
         draw.rectangle((0, 0, top_w, hud_h), fill=(*HUD_BG, 255))
         draw.line((0, hud_h - 1, top_w, hud_h - 1), fill=(*HUD_BORDER, 255))
 
-        from ggd_ai.engine.game_state import Team
+        from quack.engine.game_state import Team
         completed, total_tasks = 0, 0
         for p in state.players.values():
             if p.team == Team.GOOSE:
@@ -1022,7 +1022,7 @@ class MapRenderer:
     ) -> None:
         """Draw all players (alive and dead) with role labels, action annotations,
         and optional chat bubbles for players who spoke this tick."""
-        from ggd_ai.engine.game_state import Team
+        from quack.engine.game_state import Team
 
         # Stationary alive players
         room_alive: dict[str, list[str]] = {}
@@ -1087,7 +1087,7 @@ class MapRenderer:
         px: int, py: int, pid: str, state: GameState, scale: float,
         chat_by_player: dict[str, str] | None = None,
     ) -> None:
-        from ggd_ai.engine.game_state import Team
+        from quack.engine.game_state import Team
 
         sprite_scale = max(2, int(2 * scale))
         self._paste_sprite(img, pid, px, py, scale=sprite_scale)
@@ -1146,7 +1146,7 @@ class MapRenderer:
         state: GameState, event_log: list[str] | None,
     ) -> None:
         """Draw the right-side info panel with player roster and event log."""
-        from ggd_ai.engine.game_state import Team
+        from quack.engine.game_state import Team
 
         draw.rectangle((x, y, x + w, h), fill=(*GOD_PANEL_BG, 255))
         draw.line((x, y, x, h), fill=(*GOD_PANEL_BORDER, 255), width=2)

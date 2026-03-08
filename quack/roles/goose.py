@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ggd_ai.engine.game_state import Team
-from ggd_ai.roles.base_role import BaseRole
+from quack.engine.game_state import Team
+from quack.roles.base_role import BaseRole
 
 
 class Goose(BaseRole):

@@ -6,22 +6,22 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
-from ggd_ai.engine.event_bus import EventBus, EventType, GameEvent
-from ggd_ai.engine.game_state import GamePhase, GameState, Player, Team
-from ggd_ai.map.game_map import GameMap
-from ggd_ai.rendering.map_renderer import MapRenderer
-from ggd_ai.roles.base_role import BaseRole
-from ggd_ai.roles.duck import Duck
-from ggd_ai.roles.goose import Goose
-from ggd_ai.systems.kill import KillSystem
-from ggd_ai.systems.meeting import MeetingSystem
-from ggd_ai.systems.task import TaskSystem
-from ggd_ai.systems.vision import VisionSystem
-from ggd_ai.systems.voting import VotingSystem
-from ggd_ai.utils.config import load_game_config, load_map_config
+from quack.engine.event_bus import EventBus, EventType, GameEvent
+from quack.engine.game_state import GamePhase, GameState, Player, Team
+from quack.map.game_map import GameMap
+from quack.rendering.map_renderer import MapRenderer
+from quack.roles.base_role import BaseRole
+from quack.roles.duck import Duck
+from quack.roles.goose import Goose
+from quack.systems.kill import KillSystem
+from quack.systems.meeting import MeetingSystem
+from quack.systems.task import TaskSystem
+from quack.systems.vision import VisionSystem
+from quack.systems.voting import VotingSystem
+from quack.utils.config import load_game_config, load_map_config
 
 if TYPE_CHECKING:
-    from ggd_ai.agents.base_agent import BaseAgent
+    from quack.agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
