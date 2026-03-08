@@ -219,6 +219,17 @@ async def run_game(
         if engine.state.phase != prev_phase:
             print(f"  Phase: {prev_phase.value} -> {engine.state.phase.value}")
 
+    # Emit game_over event (engine.run() does this, but we loop manually)
+    from quack.engine.event_bus import EventType, GameEvent
+    engine.event_bus.emit(GameEvent(
+        event_type=EventType.GAME_OVER,
+        data={
+            "winner": engine.state.winner.value if engine.state.winner else None,
+            "reason": engine.state.win_reason,
+        },
+        tick=engine.state.current_tick,
+    ))
+
     print("-" * 60)
     winner = engine.state.winner
     print(f"Game Over! Winner: {winner.value if winner else 'None'}")
