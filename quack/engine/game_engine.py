@@ -100,6 +100,13 @@ class GameEngine:
         game_map = GameMap.from_config(map_config)
         return cls(game_map=game_map, config=config)
 
+    @classmethod
+    def from_config_dict(cls, config: dict, map_config_path: str) -> GameEngine:
+        """Create engine from an already-loaded config dict and map path."""
+        map_config = load_map_config(map_config_path)
+        game_map = GameMap.from_config(map_config)
+        return cls(game_map=game_map, config=config)
+
     def register_agents(self, agents: dict[str, BaseAgent]) -> None:
         self.agents = agents
 

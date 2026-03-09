@@ -1,0 +1,5 @@
+name: "kimi2.5"
+display_name: "Kimi K2.5"
+model_id: "Kimi-K2.5"
+temperature: 0.7
+requires_stream: false

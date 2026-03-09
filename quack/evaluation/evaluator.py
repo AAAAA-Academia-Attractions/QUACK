@@ -85,7 +85,7 @@ class GameEvaluator:
         log_path: str,
         run_tier3: bool = False,
         llm_api_key: str = "",
-        llm_model: str = "gpt-4o-mini",
+        llm_model: str = "gpt-5.2",
         llm_base_url: str = "",
     ) -> EvaluationResult:
         """Full evaluation of a single game log.
@@ -164,7 +164,7 @@ class BatchEvaluator:
         log_dir: str,
         run_tier3: bool = False,
         llm_api_key: str = "",
-        llm_model: str = "gpt-4o-mini",
+        llm_model: str = "gpt-5.2",
         llm_base_url: str = "",
     ) -> BatchResult:
         """Evaluate all .jsonl logs in a directory."""

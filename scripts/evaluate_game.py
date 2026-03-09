@@ -1,7 +1,8 @@
 """CLI: Evaluate a single game log through the QUACK evaluation pipeline.
 
 Usage:
-    python scripts/evaluate_game.py game_logs/game_XXXXX.jsonl [--tier3] [--api-key KEY] [--output results.json]
+    python scripts/evaluate_game.py game_logs/homogeneous/gpt5.4/20260308_143022_seed42/game.jsonl
+    python scripts/evaluate_game.py game_logs/game_XXXXX.jsonl   # legacy flat logs
 """
 
 from __future__ import annotations
@@ -37,13 +38,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--base-url",
-        default="",
+        default="https://endpoint.greatrouter.com",
         help="Base URL for the LLM API endpoint",
     )
     parser.add_argument(
         "--model",
-        default="gpt-4o-mini",
-        help="LLM model for Tier 3 claim extraction (default: gpt-4o-mini)",
+        default="gpt-5.2",
+        help="LLM model for Tier 3 claim extraction (default: gpt-5.2)",
     )
     parser.add_argument(
         "--map-config",
@@ -53,7 +54,7 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Save results as JSON to this path",
+        help="Save results as JSON to this path (default: evaluation.json next to the log)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -68,7 +69,6 @@ def main() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    # Auto-load API key from api_key.txt if not provided
     api_key = args.api_key
     if args.tier3 and not api_key:
         key_path = Path(__file__).resolve().parent.parent / "api_key.txt"
@@ -95,9 +95,18 @@ def main() -> None:
     report = format_game_report(result)
     print(report)
 
-    if args.output:
-        save_json_report(result, args.output)
-        print(f"\nResults saved to: {args.output}")
+    # Determine output path: explicit flag > auto-detect alongside game.jsonl
+    output_path = args.output
+    if output_path is None:
+        log_p = Path(args.log_path)
+        if log_p.name == "game.jsonl":
+            output_path = str(log_p.parent / "evaluation.json")
+        else:
+            output_path = None
+
+    if output_path:
+        save_json_report(result, output_path)
+        print(f"\nResults saved to: {output_path}")
 
 
 if __name__ == "__main__":
