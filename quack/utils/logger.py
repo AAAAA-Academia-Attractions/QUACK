@@ -16,11 +16,16 @@ class GameLogger:
     Each line is a JSON object with: timestamp, event_type, tick, data.
     """
 
-    def __init__(self, log_dir: str = "game_logs"):
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._game_id = f"game_{int(time.time())}"
-        self._log_path = self.log_dir / f"{self._game_id}.jsonl"
+    def __init__(self, log_path: str | Path | None = None, log_dir: str = "game_logs"):
+        if log_path is not None:
+            self._log_path = Path(log_path)
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._game_id = self._log_path.stem
+        else:
+            log_dir_path = Path(log_dir)
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+            self._game_id = f"game_{int(time.time())}"
+            self._log_path = log_dir_path / f"{self._game_id}.jsonl"
         self._entries: list[dict[str, Any]] = []
 
     @property

@@ -1,0 +1,5 @@
+name: "gpt5.4"
+display_name: "GPT-5.4"
+model_id: "gpt-5.4"
+temperature: 0.7
+requires_stream: false

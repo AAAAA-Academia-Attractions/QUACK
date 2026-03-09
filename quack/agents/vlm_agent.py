@@ -1,4 +1,4 @@
-"""VLM-powered agent using OpenAI SDK with gpt-5.2 for Goose Goose Duck."""
+"""VLM-powered agent using OpenAI SDK for Goose Goose Duck."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from quack.agents.prompt_builder import (build_action_prompt,
 
 logger = logging.getLogger(__name__)
 
-# Suppress noisy retry logs from the OpenAI client
 logging.getLogger("openai._base_client").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -28,15 +27,13 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 class VLMAgent(BaseAgent):
     """Agent driven by a Vision-Language Model via OpenAI-compatible API.
 
-    Uses the openai SDK pointing at a custom endpoint with gpt-5.2.
     Maintains per-game memory for strategic context.
     A class-level rate limiter ensures minimum spacing between API calls
     across all VLMAgent instances to avoid 429 errors.
     """
 
-    # Shared across all instances to throttle API calls globally
     _last_call_time: float = 0.0
-    _min_call_interval: float = 1.0  # minimum seconds between API calls
+    _min_call_interval: float = 1.0
 
     def __init__(
         self,
@@ -44,9 +41,10 @@ class VLMAgent(BaseAgent):
         name: str,
         api_key: str,
         base_url: str = "https://endpoint.greatrouter.com",
-        model: str = "gpt-5.2",
+        model: str = "gpt-5.4",
         temperature: float = 0.7,
         speak_chinese: bool = False,
+        requires_stream: bool = False,
     ):
         super().__init__(player_id, name)
         self.model = model
@@ -54,6 +52,7 @@ class VLMAgent(BaseAgent):
         self.api_key = api_key
         self.base_url = base_url
         self.speak_chinese = speak_chinese
+        self.requires_stream = requires_stream
 
         self._system_prompt = ""
         self.memory = AgentMemory(name)
@@ -178,7 +177,6 @@ class VLMAgent(BaseAgent):
 
     async def _call_vlm(self, messages: list[dict[str, Any]]) -> str:
         """Call the VLM API with global rate limiting and retry."""
-        # Rate limiting: ensure minimum interval between calls across all agents
         now = time.monotonic()
         wait = VLMAgent._min_call_interval - (now - VLMAgent._last_call_time)
         if wait > 0:
@@ -191,13 +189,10 @@ class VLMAgent(BaseAgent):
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=oai_messages,
-                    temperature=self.temperature,
-                )
-                content = response.choices[0].message.content or ""
-                return content
+                if self.requires_stream:
+                    return await self._call_vlm_stream(client, oai_messages)
+                else:
+                    return await self._call_vlm_sync(client, oai_messages)
             except Exception as e:
                 err_str = str(e).lower()
                 is_rate_limit = "rate" in err_str or "429" in err_str or "retry" in err_str
@@ -210,9 +205,33 @@ class VLMAgent(BaseAgent):
                     await asyncio.sleep(backoff)
                     VLMAgent._last_call_time = time.monotonic()
                     continue
-                logger.exception("[%s] VLM API call failed (attempt %d/%d)", self.name, attempt + 1, max_retries)
+                logger.exception(
+                    "[%s] VLM API call failed (attempt %d/%d)",
+                    self.name, attempt + 1, max_retries,
+                )
                 return ""
         return ""
+
+    async def _call_vlm_sync(self, client: Any, oai_messages: list[dict]) -> str:
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=oai_messages,
+            temperature=self.temperature,
+        )
+        return response.choices[0].message.content or ""
+
+    async def _call_vlm_stream(self, client: Any, oai_messages: list[dict]) -> str:
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=oai_messages,
+            temperature=self.temperature,
+            stream=True,
+        )
+        result = ""
+        for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content is not None:
+                result += chunk.choices[0].delta.content
+        return result
 
     def _convert_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert internal message format to OpenAI SDK format."""

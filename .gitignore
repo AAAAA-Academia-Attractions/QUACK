@@ -28,3 +28,5 @@ game_logs/
 renders/
 api_key.txt
 god_view*.mp4
+outputs/
+batch_results.json

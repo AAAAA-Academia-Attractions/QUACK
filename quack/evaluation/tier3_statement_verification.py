@@ -367,7 +367,7 @@ class StatementVerificationPipeline:
         timeline: GameTimeline,
         game_map: GameMap,
         api_key: str = "",
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.2",
         base_url: str = "",
     ) -> None:
         self.events = events

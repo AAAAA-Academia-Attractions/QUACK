@@ -1,0 +1,27 @@
+defaults:
+  - game: default
+  - map: simple_ship
+  - model: gpt5.2
+  - experiment: homogeneous
+  - _self_
+
+# Runtime options
+seed: null           # null = random; set integer for reproducibility
+render: true         # Generate rendered frames
+god_view: true       # Generate god-view frames
+video: true          # Auto-generate video from frames
+video_fps: 1         # Frames per second for video
+speak_chinese: false
+
+# API configuration
+api_key: ""          # Override via command line or env var: QUACK_API_KEY
+base_url: "https://endpoint.greatrouter.com"
+
+# Output
+output_base: "game_logs"   # Base directory for all experiment outputs
+
+# Suppress Hydra's own output directory
+hydra:
+  run:
+    dir: .
+  output_subdir: null
