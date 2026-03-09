@@ -1,4 +1,4 @@
-# QUACK: Questioning, Understanding, and Assessing Collaborative Knowledge
+# QUACK🦆: Questioning, Understanding, and Assessing Collaborative Knowledge
 
 ### A Multimodal Social Deduction Benchmark for Vision-Language Models
 
