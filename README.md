@@ -8,9 +8,7 @@ Social deduction games are compelling testbeds for evaluating agents' theory of 
 
 Beyond environment design, QUACK introduces a structured evaluation protocol that measures task performance, social coordination, adversarial robustness, and behavioral linguistic consistency. We develop an automatic Statement Verification Pipeline that extracts spatial and behavioral claims from meeting utterances and validates them against engine-level ground-truth logs, enabling scalable auditing of deception, belief consistency, and action-speech alignment under partial observability.
 
-<video width="320" height="240" controls>
-  <source src="https://github.com/AAAAA-Academia-Attractions/QUACK/blob/main/assets/video.mp4" type="video/mp4">
-</video>
+![Alt Text](assets/video.gif)
 
 ---
 
