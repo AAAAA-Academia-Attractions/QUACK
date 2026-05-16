@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,7 @@ class EvaluationResult:
     tier1: Tier1Metrics | None = None
     tier2: Tier2Metrics | None = None
     tier3: Tier3Metrics | None = None
+    tier3_audit_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the full result to a JSON-compatible dict."""
@@ -43,7 +45,10 @@ class EvaluationResult:
         if self.tier2:
             result["tier2"] = self.tier2.to_dict()
         if self.tier3:
-            result["tier3"] = self.tier3.to_dict()
+            tier3_dict = self.tier3.to_dict()
+            if self.tier3_audit_path:
+                tier3_dict["tier3_audit_path"] = self.tier3_audit_path
+            result["tier3"] = tier3_dict
         return result
 
 
@@ -87,6 +92,7 @@ class GameEvaluator:
         llm_api_key: str = "",
         llm_model: str = "gpt-5.2",
         llm_base_url: str = "",
+        save_tier3_audit: bool = False,
     ) -> EvaluationResult:
         """Full evaluation of a single game log.
 
@@ -96,6 +102,7 @@ class GameEvaluator:
             llm_api_key: API key for the LLM (required if run_tier3=True).
             llm_model: Model identifier for claim extraction.
             llm_base_url: Base URL for the LLM API.
+            save_tier3_audit: If True, write tier3_claims.jsonl alongside evaluation.json.
 
         Returns:
             EvaluationResult with all requested tiers populated.
@@ -129,6 +136,7 @@ class GameEvaluator:
 
         # Tier 3
         tier3 = None
+        tier3_audit_path = None
         if run_tier3:
             if not llm_api_key:
                 logger.warning("Tier 3 requested but no LLM API key provided; skipping")
@@ -144,12 +152,23 @@ class GameEvaluator:
                 )
                 tier3 = pipeline.run()
 
+                # Write claim-level audit if requested
+                if save_tier3_audit and pipeline.claim_audits:
+                    audit_dir = Path(log_path).parent
+                    audit_path = audit_dir / "tier3_claims.jsonl"
+                    with open(audit_path, "w") as f:
+                        for entry in pipeline.claim_audits:
+                            f.write(json.dumps(entry, default=str) + "\n")
+                    tier3_audit_path = str(audit_path)
+                    logger.info("Tier 3 audit written to %s", tier3_audit_path)
+
         return EvaluationResult(
             game_id=game_id,
             log_path=str(log_path),
             tier1=tier1,
             tier2=tier2,
             tier3=tier3,
+            tier3_audit_path=tier3_audit_path,
         )
 
 
