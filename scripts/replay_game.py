@@ -81,8 +81,18 @@ def build_initial_state(
     return state, vision, player_names
 
 
-def apply_event(state: GameState, event: dict[str, Any], event_log: list[str]) -> None:
-    """Apply a single event to mutate the game state."""
+def apply_event(
+    state: GameState,
+    event: dict[str, Any],
+    event_log: list[str],
+    pending_arrivals: dict[int, list[dict]] | None = None,
+) -> None:
+    """Apply a single event to mutate the game state.
+
+    `pending_arrivals` is an optional tick -> list[arrival_event] map used to
+    schedule multi-tick arrivals in `state.tick_movements` so that witness
+    arrows in the replay match what was rendered live.
+    """
     et = event["event_type"]
     data = event["data"]
     tick = event.get("tick", 0)
@@ -93,9 +103,14 @@ def apply_event(state: GameState, event: dict[str, Any], event_log: list[str]) -
     if et == "tick_start":
         state.current_tick = data.get("tick", tick)
         state.phase = GamePhase.FREE_ROAM
-        # Reset per-tick free-roam chat and tick down kill cooldowns
+        # Reset per-tick free-roam chat, witnessed movements, and kill cooldowns
         if hasattr(state, "room_messages"):
             state.room_messages.clear()
+        if hasattr(state, "tick_movements"):
+            state.tick_movements.clear()
+            if pending_arrivals is not None:
+                for ev in pending_arrivals.pop(state.current_tick, []):
+                    state.tick_movements.append(ev)
         for p in state.alive_players:
             if p.team == Team.DUCK and p.kill_cooldown > 0:
                 p.kill_cooldown -= 1
@@ -103,18 +118,45 @@ def apply_event(state: GameState, event: dict[str, Any], event_log: list[str]) -
     elif et == "player_moved":
         pid = data["player_id"]
         player = state.players.get(pid)
+        from_room = data.get("from", "")
+        to_room = data.get("to", "")
+        ticks_remaining = data.get("ticks_remaining", 0)
         if player and player.is_alive:
-            ticks_remaining = data.get("ticks_remaining", 0)
             if ticks_remaining > 0:
-                player.moving_from = data["from"]
-                player.moving_to = data["to"]
+                player.moving_from = from_room
+                player.moving_to = to_room
                 player.move_ticks_remaining = ticks_remaining
             else:
-                player.current_room = data["to"]
+                player.current_room = to_room
                 player.moving_from = ""
                 player.moving_to = ""
                 player.move_ticks_remaining = 0
-                player.visited_rooms.add(data["to"])
+                player.visited_rooms.add(to_room)
+        if hasattr(state, "tick_movements"):
+            multi_tick = ticks_remaining > 0
+            state.tick_movements.append({
+                "type": "departed",
+                "player_id": pid,
+                "from_room": from_room,
+                "to_room": to_room,
+                "multi_tick": multi_tick,
+                "tick": tick,
+            })
+            arrival_ev = {
+                "type": "arrived",
+                "player_id": pid,
+                "from_room": from_room,
+                "to_room": to_room,
+                "multi_tick": multi_tick,
+                "tick": tick + ticks_remaining if multi_tick else tick,
+            }
+            if multi_tick:
+                if pending_arrivals is not None:
+                    pending_arrivals.setdefault(tick + ticks_remaining, []).append(
+                        arrival_ev
+                    )
+            else:
+                state.tick_movements.append(arrival_ev)
         event_log.append(f"[T{tick}] {_name(pid)} moved {data['from']} -> {data['to']}")
 
     elif et == "player_killed":
@@ -290,6 +332,7 @@ def replay(
     out.mkdir(parents=True, exist_ok=True)
 
     event_log: list[str] = []
+    pending_arrivals: dict[int, list[dict]] = {}
     frame_counter = 0
 
     def save_frame(img: object) -> None:
@@ -310,7 +353,7 @@ def replay(
         et = ev["event_type"]
         tick = ev.get("tick", 0)
 
-        apply_event(state, ev, event_log)
+        apply_event(state, ev, event_log, pending_arrivals)
 
         # Render god view after each tick_end
         if et == "tick_end":

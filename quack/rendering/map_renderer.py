@@ -512,6 +512,7 @@ class MapRenderer:
         visible_rooms: set[str],
         visible_players: list[str],
         visible_bodies: list[str],
+        witnessed_events: list[dict] | None = None,
     ) -> Image.Image:
         """Render a zoomed view centered on the player's current room."""
         scale = 2.0
@@ -524,6 +525,7 @@ class MapRenderer:
         self._draw_task_markers_local(draw, scale, state, visible_rooms)
         self._draw_body_markers_local(img, draw, scale, state, visible_bodies)
         self._draw_players_local(img, draw, scale, state, visible_players, player)
+        self._draw_witness_arrows_local(draw, scale, player, witnessed_events or [])
         self._draw_viewer_local(img, draw, scale, player)
 
         # Compute camera center: in a room it is the room center; in transit,
@@ -736,6 +738,98 @@ class MapRenderer:
                 draw.text((px, py - 40), name, fill=TEXT_WHITE,
                           font=self._font_md, anchor="mb")
 
+    def _draw_witness_arrows_local(
+        self,
+        draw: ImageDraw.Draw,
+        scale: float,
+        viewer: Player,
+        witnessed_events: list[dict],
+    ) -> None:
+        """Draw single-tick arrows for departures from / arrivals into viewer's room.
+
+        For each event, anchor a small arrowhead about 30% along the corridor
+        between the viewer's room and the corresponding neighbor; departures
+        point outward, arrivals point inward. Multiple events on the same
+        corridor stack vertically so labels don't overlap.
+        """
+        if not witnessed_events or viewer.is_in_transit:
+            return
+        viewer_room_name = viewer.current_room
+        viewer_room = self.game_map.rooms.get(viewer_room_name)
+        if viewer_room is None:
+            return
+        viewer_center = self._room_center(viewer_room, scale)
+
+        per_corridor: dict[str, list[dict]] = {}
+        for ev in witnessed_events:
+            etype = ev.get("type")
+            if etype == "departed" and ev.get("from_room") == viewer_room_name:
+                neighbor = ev.get("to_room")
+            elif etype == "arrived" and ev.get("to_room") == viewer_room_name:
+                neighbor = ev.get("from_room")
+            else:
+                continue
+            if not neighbor or neighbor not in self.game_map.rooms:
+                continue
+            per_corridor.setdefault(neighbor, []).append(ev)
+
+        for neighbor_name, events in per_corridor.items():
+            neighbor_room = self.game_map.rooms[neighbor_name]
+            neighbor_center = self._room_center(neighbor_room, scale)
+            dx = neighbor_center[0] - viewer_center[0]
+            dy = neighbor_center[1] - viewer_center[1]
+            length = max(1.0, (dx * dx + dy * dy) ** 0.5)
+            ux, uy = dx / length, dy / length
+            anchor_t = 0.30
+            ax = int(viewer_center[0] + dx * anchor_t)
+            ay = int(viewer_center[1] + dy * anchor_t)
+            nx, ny = -uy, ux
+
+            line_h = 14
+            n = len(events)
+            for i, ev in enumerate(events):
+                offset = (i - (n - 1) / 2.0) * line_h
+                cx = int(ax + nx * offset)
+                cy = int(ay + ny * offset)
+                pid = ev.get("player_id", "")
+                color = self._get_player_color(pid)
+                name = self._get_player_name(pid) or pid
+                arrow_len = 22
+                if ev.get("type") == "departed":
+                    tip_x = int(cx + ux * arrow_len)
+                    tip_y = int(cy + uy * arrow_len)
+                    tail_x, tail_y = cx, cy
+                    label = f"{name} -> {ev.get('to_room', '?')}"
+                else:
+                    tip_x = int(cx - ux * arrow_len)
+                    tip_y = int(cy - uy * arrow_len)
+                    tail_x = int(cx + ux * arrow_len * 0.2)
+                    tail_y = int(cy + uy * arrow_len * 0.2)
+                    label = f"{name} <- {ev.get('from_room', '?')}"
+
+                draw.line([(tail_x, tail_y), (tip_x, tip_y)], fill=color, width=4)
+                head_w = 7
+                left_x = int(tip_x - ux * head_w + nx * head_w)
+                left_y = int(tip_y - uy * head_w + ny * head_w)
+                right_x = int(tip_x - ux * head_w - nx * head_w)
+                right_y = int(tip_y - uy * head_w - ny * head_w)
+                draw.polygon(
+                    [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
+                    fill=color,
+                )
+                swatch_r = 4
+                draw.ellipse(
+                    (cx - swatch_r, cy - swatch_r, cx + swatch_r, cy + swatch_r),
+                    fill=color,
+                )
+                draw.text(
+                    (cx + nx * 12, cy + ny * 12),
+                    label,
+                    fill=TEXT_WHITE,
+                    font=self._font_sm,
+                    anchor="mm",
+                )
+
     def _draw_viewer_local(
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, player: Player,
     ) -> None:
@@ -795,12 +889,16 @@ class MapRenderer:
         for p in all_players:
             if hasattr(vision_system, "compute_visibility"):
                 vis = vision_system.compute_visibility(p, state)
+                witnessed: list[dict] = []
+                if hasattr(vision_system, "get_witnessed_movements"):
+                    witnessed = vision_system.get_witnessed_movements(p, state)
                 local_img = self.render_local_view(
                     state=state,
                     player=p,
                     visible_rooms=vis.visible_rooms,
                     visible_players=vis.visible_players,
                     visible_bodies=vis.visible_bodies,
+                    witnessed_events=witnessed,
                 )
             else:
                 local_img = self.render_local_view(

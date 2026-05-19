@@ -21,6 +21,11 @@ class TickMemory:
     chats_heard: list[str] = field(default_factory=list)
     in_transit: bool = False
     moving_to: str = ""
+    # Witnessed movements while the agent was in `room` this tick.
+    # Each entry: {"name": str, "to_room": str, "multi_tick": bool} for
+    # departures, or {"name": str, "from_room": str} for arrivals.
+    departures: list[dict] = field(default_factory=list)
+    arrivals: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +59,8 @@ class AgentMemory:
         chats_heard: list[str] | None = None,
         in_transit: bool = False,
         moving_to: str = "",
+        departures: list[dict] | None = None,
+        arrivals: list[dict] | None = None,
     ) -> None:
         if chats_heard is None:
             chats_heard = []
@@ -66,6 +73,8 @@ class AgentMemory:
             chats_heard=list(chats_heard),
             in_transit=in_transit,
             moving_to=moving_to,
+            departures=list(departures or []),
+            arrivals=list(arrivals or []),
         ))
 
     def start_meeting(self, tick: int, reason: str, dead_players: list[str]) -> None:
@@ -111,7 +120,47 @@ class AgentMemory:
                 parts.append(f"saw [{', '.join(t.players_seen)}]")
             if t.bodies_seen:
                 parts.append(f"FOUND BODY of [{', '.join(t.bodies_seen)}]!")
+            witness_bits: list[str] = []
+            for d in t.departures:
+                witness_bits.append(f"{d['name']} -> {d['to_room']}")
+            for a in t.arrivals:
+                witness_bits.append(f"{a['name']} arrived from {a['from_room']}")
+            if witness_bits:
+                parts.append(f"witnessed [{'; '.join(witness_bits)}]")
             lines.append(", ".join(parts))
+        return "\n".join(lines)
+
+    def build_witness_summary(self, since_tick: int | None = None) -> str:
+        """Chronological summary of witnessed departures/arrivals.
+
+        Used in discussion and vote prompts so the agent can describe who they
+        saw leave or enter their room and toward / from which neighbor.
+
+        Args:
+            since_tick: If provided, only include witnesses recorded after this
+                tick. Defaults to the last meeting tick (or game start).
+        """
+        if since_tick is None:
+            since_tick = 0
+            if self.meeting_history:
+                since_tick = self.meeting_history[-1].tick
+
+        lines: list[str] = []
+        for t in self.tick_history:
+            if t.tick <= since_tick:
+                continue
+            if t.in_transit:
+                continue
+            for d in t.departures:
+                lines.append(
+                    f"  T{t.tick}: {d['name']} left {t.room} -> {d['to_room']}"
+                )
+            for a in t.arrivals:
+                lines.append(
+                    f"  T{t.tick}: {a['name']} entered {t.room} from {a['from_room']}"
+                )
+        if not lines:
+            return ""
         return "\n".join(lines)
 
     def build_encounter_summary(self) -> str:

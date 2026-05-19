@@ -158,6 +158,9 @@ class VLMAgent(BaseAgent):
             f"{msg.get('name', '?')}: {msg.get('message', '')}"
             for msg in observation.get("room_chat", [])
         ]
+        transit_obs = observation.get("transit_observations", {}) or {}
+        departures = list(transit_obs.get("departures", []))
+        arrivals = list(transit_obs.get("arrivals", []))
         self.memory.record_tick(
             tick=observation.get("tick", 0),
             room=observation.get("current_room", "?"),
@@ -167,6 +170,8 @@ class VLMAgent(BaseAgent):
             chats_heard=room_chat,
             in_transit=observation.get("in_transit", False),
             moving_to=observation.get("moving_to", ""),
+            departures=departures,
+            arrivals=arrivals,
         )
 
     def _collect_images(self) -> list[Image.Image]:
