@@ -109,6 +109,7 @@ class VisionSystem:
         ]
 
         return {
+            "tick": state.current_tick,
             "current_room": player.current_room,
             "in_transit": player.is_in_transit,
             "moving_to": player.moving_to if player.is_in_transit else None,
