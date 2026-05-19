@@ -1,4 +1,6 @@
-# Changes on `fix/tier3-temporal-window`
+# CHANGES
+
+## Tier 3 statement verification (`fix/tier3-temporal-window`)
 
 Branch: `fix/tier3-temporal-window`  
 Base: `main`  
@@ -177,3 +179,72 @@ uv run python scripts/evaluate_game.py \
 cat game_logs/.../evaluation.json | python -m json.tool | grep -A5 tier3
 cat game_logs/.../tier3_claims.jsonl | head -3
 ```
+
+---
+
+## Agent & observation fixes
+
+Branch: `fix/tick-agent-memory`  
+Base: `main`  
+Commits:
+- `93d7939` — add tick in agent observation
+- `3928ceb` — fix free-roam `say()` forwarding to game engine
+
+### Summary
+
+Two fixes for VLM agent play during free roam:
+
+1. **Include `tick` in observations** — `VisionSystem.build_observation()` now sets `"tick": state.current_tick`, so agent memory (movement summary, encounters, route since last meeting) uses real tick numbers instead of always `0`.
+2. **Forward free-roam `| say(...)` to the game engine** — `VLMAgent` previously dropped chat when `_parse_action()` returned only `move(medbay)`; the model’s `| say(message)` never reached `GameEngine`. Other players in the same room can now hear free-roam chat via `room_messages` / `FREE_ROAM_CHAT`.
+
+Tier 1 / Tier 2 / Tier 3 evaluation are unchanged (they read `game.jsonl` events; free-roam chat was already logged when the engine received it).
+
+### Files changed
+
+| File | Purpose |
+|------|---------|
+| `quack/systems/vision.py` | Add `"tick"` to `build_observation()` |
+| `quack/agents/action_format.py` | **New** — `extract_say_clause()`, `combine_action_and_say()` |
+| `quack/agents/vlm_agent.py` | Return `combine_action_and_say(action, response)` from `choose_action()` |
+| `tests/test_systems/test_vision.py` | **New** — observation includes current tick |
+| `tests/test_agents/test_vlm_say.py` | **New** — say extraction and combine behavior |
+
+### Detailed changes
+
+#### 1. Observation `tick`
+
+**Problem:** `VLMAgent._record_observation()` used `observation.get("tick", 0)`, but `build_observation()` never set `tick`. Every `TickMemory` entry was stored at tick `0`, breaking `build_movement_summary()`, `build_encounter_summary()`, and `get_route_description()` (filter `t.tick > last_meeting_tick`).
+
+**Fix:** Add `"tick": state.current_tick` to the dict returned by `build_observation()`.
+
+#### 2. Free-roam `say()` forwarding
+
+**Problem:** Prompts instruct models to return `move(medbay) | say(I saw something)`. `VLMAgent.choose_action()` called `_parse_action()`, which only returns strings from `available_actions` (e.g. `move(medbay)`). `GameEngine` splits `raw_action` on `|` to emit `FREE_ROAM_CHAT`; without `| say(...)` in the return value, chat was silently dropped (move still ran).
+
+**Fix:**
+
+- `extract_say_clause(response)` — find `say(...)` in the raw model text (any `|`-separated segment, or a lone `say(...)` line); normalize to `say(message)` (handles `Say(...)` casing).
+- `combine_action_and_say(action, response)` — return `f"{action} | {say_clause}"` when present.
+- `choose_action()` returns the combined string; memory and logs record action + chat.
+
+**Example:**
+
+```text
+Model response:  move(medbay) | say(I saw Bob)
+Returned to engine: move(medbay) | say(I saw Bob)
+Engine:            move executes + FREE_ROAM_CHAT for same-room players
+```
+
+### Tests
+
+```bash
+python -m pytest tests/test_systems/test_vision.py tests/test_agents/test_vlm_say.py -q
+```
+
+7 tests (1 vision + 6 say).
+
+### Backward compatibility
+
+- `RandomAgent` unchanged (already strips `#`; does not use `say`).
+- `GameEngine` free-roam chat parsing unchanged; VLM now supplies the format it expects.
+- Re-run games for new agent memory / free-roam chat behavior; existing `game.jsonl` files are not retroactively fixed.
