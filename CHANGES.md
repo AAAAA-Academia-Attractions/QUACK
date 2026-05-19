@@ -248,3 +248,181 @@ python -m pytest tests/test_systems/test_vision.py tests/test_agents/test_vlm_sa
 - `RandomAgent` unchanged (already strips `#`; does not use `say`).
 - `GameEngine` free-roam chat parsing unchanged; VLM now supplies the format it expects.
 - Re-run games for new agent memory / free-roam chat behavior; existing `game.jsonl` files are not retroactively fixed.
+
+---
+
+## Witness vision: agents see who leaves / enters their room
+
+Branch: `fix/agent_vision`  
+Base: `fix/tick-agent-memory`  
+Commit: `7e67170 Add witness vision: agents now see who leaves/enters their room`
+
+### Summary
+
+Closes the perception gap where a stationary agent saw same-room roommates simply **disappear** when they moved (and **appear** with no origin info when they entered). After this change:
+
+1. **Stationary witnesses** see departures from their room (with destination) and arrivals into their room (with origin) every tick.
+2. **Corridor co-travelers** carry direction info (`co_direction: "same" | "opposite"`).
+3. Witness info reaches the VLM through **three correlated surfaces**: the text observation, the local-view image (single-tick arrows at room doorways), and `AgentMemory` (which is reused in discussion and vote prompts).
+4. Visibility range, the JSONL event schema, and Tier 1 / Tier 2 / Tier 3 evaluation are unchanged.
+
+The same filter (`VisionSystem.get_witnessed_movements`) feeds both the image arrows and the text observation, so the two surfaces cannot disagree.
+
+### Files changed
+
+| File | Δ | Purpose |
+|------|---|---------|
+| `quack/engine/game_state.py` | +6 | Add `tick_movements: list[dict]` per-tick witness event log |
+| `quack/engine/game_engine.py` | +54 −10 | Clear at tick start; emit `departed` / `arrived` from `_do_move` and `_advance_transit`; wire `witnessed_events` through `_render_for_player` |
+| `quack/systems/vision.py` | +78 −10 | New `get_witnessed_movements(player, state)`; `build_observation` adds `transit_observations`; corridor co-travelers annotated with `in_transit`, `moving_to`, `co_direction` |
+| `quack/rendering/map_renderer.py` | +98 | `render_local_view` accepts `witnessed_events`; new `_draw_witness_arrows_local` draws single-tick arrows at room doorways; god-view per-player POV stack uses the same helper |
+| `quack/agents/prompt_builder.py` | +40 −4 | New `=== MOVEMENT AROUND YOU (this tick) ===` block in `build_action_prompt`; corridor co-direction phrasing; witness summary section in `build_discussion_prompt` and `build_vote_prompt` |
+| `quack/agents/memory.py` | +49 | `TickMemory` gains `departures` / `arrivals`; `build_movement_summary` mentions witnessed traffic; new `build_witness_summary(since_tick=None)` produces chronological lines scoped to "since last meeting" |
+| `quack/agents/vlm_agent.py` | +5 | `_record_observation` copies `transit_observations.departures` / `arrivals` into the latest `TickMemory` |
+| `scripts/replay_game.py` | +61 −7 | Rebuild `tick_movements` per tick from logged `player_moved` events with a `pending_arrivals: {tick: [event]}` queue for multi-tick completions |
+| `tests/test_systems/test_vision.py` | +172 | 7 new tests (multi-tick / instant departures and arrivals, self-event exclusion, transit viewer co-direction, room-filter) |
+| `tests/test_systems/test_engine_witness.py` | +231 (new) | 6 integration tests covering engine emission for instant + multi-tick moves, per-tick clear, acted-first edge case, and replay reconstruction parity |
+| `tests/test_agents/test_witness_memory.py` | +147 (new) | 9 tests covering `TickMemory` storage, `build_movement_summary` / `build_witness_summary` formatting, meeting-boundary scoping, and prompt rendering for action / discussion / vote |
+| `tests/test_rendering/test_witness_arrows.py` | +148 (new) | 5 tests: empty events = byte-identical image (regression guard), non-empty events alter pixels, irrelevant corridors are ignored, transit viewers skip arrows, image arrow set matches observation filter |
+
+### Detailed changes
+
+#### 1. Engine instrumentation — `state.tick_movements`
+
+**New: `GameState.tick_movements`** (`game_state.py`) — cleared at the top of every `_run_free_roam_tick`. Each entry:
+
+```python
+{
+    "type": "departed" | "arrived",
+    "player_id": str,
+    "from_room": str,
+    "to_room": str,
+    "multi_tick": bool,
+    "tick": int,
+}
+```
+
+Where events are produced:
+
+- `_do_move` weight 1 (instant): appends one `departed` AND one `arrived` event.
+- `_do_move` weight > 1 (multi-tick start): appends one `departed` event.
+- `_advance_transit` (multi-tick completion): appends one `arrived` event. This fires BEFORE any agent's observation is built this tick, so every stationary witness in the destination room sees the arrival.
+
+This is authoritative state in the engine and does not depend on agent processing order.
+
+#### 2. Vision filtering — `get_witnessed_movements`
+
+**New helper** (`vision.py`):
+
+```python
+def get_witnessed_movements(self, player: Player, state: GameState) -> list[dict]:
+    if player.is_in_transit:
+        return []
+    room = player.current_room
+    return [
+        ev for ev in state.tick_movements
+        if ev["player_id"] != player.player_id and (
+            (ev["type"] == "departed" and ev["from_room"] == room) or
+            (ev["type"] == "arrived" and ev["to_room"] == room)
+        )
+    ]
+```
+
+Used in two places to guarantee the image and text observation agree:
+
+1. `GameEngine._render_for_player` — passes the result as `witnessed_events` to `renderer.render_local_view`.
+2. `VisionSystem.build_observation` — used to populate `transit_observations`.
+
+#### 3. Observation schema
+
+`build_observation()` adds:
+
+```python
+"transit_observations": {
+    "departures": [{"id", "name", "to_room", "multi_tick"}, ...],
+    "arrivals":   [{"id", "name", "from_room"}, ...],
+}
+```
+
+For transit viewers, `visible_players` entries are augmented with:
+
+```python
+"in_transit": True,
+"moving_to": <other player's destination>,
+"co_direction": "same" | "opposite",
+```
+
+Stationary viewers' `visible_players` entries are unchanged (backward compatible).
+
+#### 4. Prompt rendering
+
+**`build_action_prompt`** renders a new block when `transit_observations` is non-empty:
+
+```text
+=== MOVEMENT AROUND YOU (this tick) ===
+  Bob LEFT toward electrical (multi-tick)
+  Alice ARRIVED from cafeteria
+```
+
+Corridor viewers see direction in `visible_players`:
+
+```text
+Visible players: Bob (corridor, going SAME way as you), Carol (corridor, going OPPOSITE way from you)
+```
+
+**`build_discussion_prompt`** and **`build_vote_prompt`** include `memory.build_witness_summary()` so meeting speakers can cite concrete witness evidence.
+
+#### 5. Memory
+
+- `TickMemory.departures` / `arrivals` store the witness payload verbatim.
+- `build_movement_summary` lines now append `witnessed [Bob -> electrical; Carol arrived from cafeteria]`.
+- New `build_witness_summary(since_tick=None)` returns lines like:
+  ```text
+    T8: Bob left medbay -> electrical
+    T12: Carol entered medbay from cafeteria
+  ```
+  Defaults to "since last meeting" (uses `meeting_history[-1].tick`), which keeps speeches focused on the current round.
+
+#### 6. Renderer
+
+**New: `_draw_witness_arrows_local(draw, scale, viewer, witnessed_events)`** (`map_renderer.py`):
+
+- Called from `render_local_view` after `_draw_players_local` and before `_draw_viewer_local`.
+- For each event involving `viewer.current_room`:
+  - Computes the corridor line segment between `_room_center(viewer_room)` and `_room_center(neighbor_room)`.
+  - Anchors the arrow at ~30% along the segment (just past the room boundary).
+  - Outward triangle + label `Bob -> electrical` for departures; inward triangle + label `Alice <- cafeteria` for arrivals.
+  - Uses `_get_player_color(pid)` for the arrow color and a small color swatch.
+  - Multiple events on the same corridor stack vertically with small offsets.
+- Transit viewers and empty event lists are no-ops — same pixels as before this change (regression-safe).
+
+`render_global_map` is NOT modified; it still shows only the viewer's own dot.
+
+#### 7. Replay parity
+
+`scripts/replay_game.py` rebuilds `tick_movements` from the same `player_moved` events already in `game.jsonl`:
+
+- `apply_event` accepts a new optional `pending_arrivals: dict[int, list[dict]]` map.
+- On `tick_start`: clear `state.tick_movements`, then drain `pending_arrivals[current_tick]` into it.
+- On `player_moved` with `ticks_remaining == 0` (instant): append `departed` + `arrived` to current tick.
+- On `player_moved` with `ticks_remaining > 0` (multi-tick start): append `departed` to current tick; queue an `arrived` event into `pending_arrivals[tick + ticks_remaining]`.
+
+No new JSONL event types are added.
+
+### Backward compatibility
+
+- All new keys are additive. Existing `visible_players` entries still carry `id`, `name`, `room`.
+- `render_local_view` with `witnessed_events=None` (the default) and no events produces byte-identical output to the pre-change implementation (covered by a regression test).
+- `RandomAgent` ignores the new observation keys; existing test fixtures still pass.
+- Tier 1 / Tier 2 / Tier 3 evaluation logic is unchanged. `GameReconstructor` and `tier3_statement_verification` continue to read `player_moved` events; `tick_movements` is transient runtime state.
+- Old `game.jsonl` logs replay correctly because `pending_arrivals` is rebuilt from existing event fields.
+
+### Tests
+
+```bash
+python -m pytest -q
+# 125 passed in 0.13s
+```
+
+- 26 new tests across 4 files; 0 regressions on the 99 pre-existing tests.
+- End-to-end smoke test: `python scripts/run_game.py video=false god_view=false seed=42` runs to completion; `python scripts/replay_game.py game_logs/.../game.jsonl --output /tmp/...` renders all frames including witness arrows without error.
