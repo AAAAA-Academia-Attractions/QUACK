@@ -1,7 +1,7 @@
 """Entry point to configure and run a full Goose Goose Duck game.
 
 Uses Hydra for configuration management.  All CLI overrides follow the
-``key=value`` syntax, e.g. ``model=claude_opus4.6 seed=42``.
+``key=value`` syntax, e.g. ``model=claude_opus4.7 seed=42``.
 """
 
 from __future__ import annotations

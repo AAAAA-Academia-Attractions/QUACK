@@ -12,10 +12,10 @@ pip install -e ".[dev]"
 python scripts/run_game.py
 
 # Run with specific model and seed
-python scripts/run_game.py model=claude_opus4.6 seed=42
+python scripts/run_game.py model=claude_opus4.7 seed=42
 
 # Run heterogeneous experiment
-python scripts/run_game.py experiment=heterogeneous model=gpt5.2 experiment.duck_model=claude_opus4.6 seed=42
+python scripts/run_game.py experiment=heterogeneous model=gpt5.5 experiment.duck_model=claude_opus4.7 seed=42
 
 # Override game rules
 python scripts/run_game.py game.max_ticks=100 game.num_ducks=2
@@ -30,17 +30,17 @@ python -m pytest tests/test_evaluation/test_tier1.py::TestTier1Metrics::test_win
 ruff check .
 
 # Replay a game log
-python scripts/replay_game.py game_logs/homogeneous/gpt5.2/<timestamp>/game.jsonl --video replay.mp4
+python scripts/replay_game.py game_logs/homogeneous/gpt5.5/<timestamp>/game.jsonl --video replay.mp4
 
 # Evaluate a game
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.2/<timestamp>/game.jsonl
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/<timestamp>/game.jsonl
 
 # Batch evaluate (with Tier 3)
 python scripts/evaluate_batch.py game_logs/ --tier3 --api-key YOUR_KEY
 
 # Batch experiments
-./scripts/batch_homogeneous.sh -m gpt5.2 -n 10
-./scripts/batch_heterogeneous.sh -g gpt5.2 -d claude_opus4.6 -n 10
+./scripts/batch_homogeneous.sh -m gpt5.5 -n 10
+./scripts/batch_heterogeneous.sh -g gpt5.5 -d claude_opus4.7 -n 10
 ./scripts/batch_full_experiment.sh -n 5
 ```
 
@@ -48,7 +48,7 @@ python scripts/evaluate_batch.py game_logs/ --tier3 --api-key YOUR_KEY
 
 ### High-level structure
 
-QUACK is a **social deduction game engine** (Goose Goose Duck / Among Us-like) designed as a benchmark for Vision-Language Models. The game runs in discrete ticks with Free Roam and Meeting phases.
+QUACK is a **social deduction game engine** (Goose Goose Duck / Among Us-like) designed as an open-source environment and evaluation framework for auditing multimodal social reasoning in Vision-Language Model agents. The game runs in discrete ticks with Free Roam and Meeting phases.
 
 ```
 quack/

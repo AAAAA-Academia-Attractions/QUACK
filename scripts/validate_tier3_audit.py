@@ -58,7 +58,7 @@ def build_map() -> GameMap:
 
 
 def main():
-    LOG = "game_logs/homogeneous/gpt5.2/20260516_215828_seed3/game.jsonl"
+    LOG = "game_logs/homogeneous/gpt5.5/20260516_215828_seed3/game.jsonl"
     events = parse_log(LOG)
     initial_state = get_initial_state(events)
     name_to_id = {info["name"]: pid for pid, info in initial_state.items()}

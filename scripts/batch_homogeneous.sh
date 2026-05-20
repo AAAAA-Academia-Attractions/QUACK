@@ -2,14 +2,14 @@
 # Run N homogeneous games for one or more models.
 #
 # Usage:
-#   ./scripts/batch_homogeneous.sh                        # all models, 50 seeds
-#   ./scripts/batch_homogeneous.sh -m gpt5.4              # single model
-#   ./scripts/batch_homogeneous.sh -m gpt5.4 -n 10        # 10 games
-#   ./scripts/batch_homogeneous.sh -m gpt5.4 -s 11 -n 10  # seeds 11-20
-#   ./scripts/batch_homogeneous.sh -m gpt5.4,claude_opus4.6 -n 5
+#   ./scripts/batch_homogeneous.sh                                    # all models, 50 seeds
+#   ./scripts/batch_homogeneous.sh -m gpt5.5                          # single model
+#   ./scripts/batch_homogeneous.sh -m gpt5.5 -n 10                    # 10 games
+#   ./scripts/batch_homogeneous.sh -m gpt5.5 -s 11 -n 10              # seeds 11-20
+#   ./scripts/batch_homogeneous.sh -m gpt5.5,claude_opus4.7 -n 5
 set -euo pipefail
 
-ALL_MODELS="gpt5.2 gpt5.4 gemini3.1pro claude_opus4.6 grok4 kimi2.5"
+ALL_MODELS="gpt5.5 claude_opus4.7 gemini3.1pro"
 NUM_GAMES=50
 START_SEED=1
 MODELS=""
@@ -26,10 +26,10 @@ Options:
   -h          Show this help
 
 Examples:
-  $(basename "$0")                              # all 5 models × 50 seeds
-  $(basename "$0") -m gpt5.4 -n 10             # GPT-5.4 × 10 seeds
-  $(basename "$0") -m gpt5.4,grok4 -n 5        # two models × 5 seeds
-  $(basename "$0") -m gpt5.4 -n 10 -- video=false  # pass extra Hydra args
+  $(basename "$0")                                     # all 3 models × 50 seeds
+  $(basename "$0") -m gpt5.5 -n 10                     # GPT-5.5 × 10 seeds
+  $(basename "$0") -m gpt5.5,claude_opus4.7 -n 5       # two models × 5 seeds
+  $(basename "$0") -m gpt5.5 -n 10 -- video=false      # pass extra Hydra args
 EOF
     exit 0
 }

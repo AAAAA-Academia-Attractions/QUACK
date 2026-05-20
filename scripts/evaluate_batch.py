@@ -6,13 +6,13 @@ parsed from the directory path.
 
 Usage:
     # Evaluate all games for a specific homogeneous model
-    python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.4/
+    python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/
 
     # Evaluate all homogeneous models
     python scripts/evaluate_batch.py game_logs/homogeneous/
 
     # Evaluate a heterogeneous condition
-    python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.4_duck_claude_opus4.6/
+    python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/
 
     # Evaluate everything
     python scripts/evaluate_batch.py game_logs/
@@ -94,8 +94,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.2",
-        help="LLM model for Tier 3 claim extraction (default: gpt-5.2)",
+        default="gpt-5.5",
+        help="LLM model for Tier 3 claim extraction (default: gpt-5.5)",
     )
     parser.add_argument(
         "--map-config",
