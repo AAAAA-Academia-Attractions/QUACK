@@ -17,9 +17,9 @@ usage() {
 Usage: $(basename "$0") [OPTIONS] [-- EXTRA_HYDRA_ARGS...]
 
 Runs the full experiment matrix:
-  - 5 homogeneous conditions  (one per model)
-  - 20 heterogeneous conditions (all cross-model pairs)
-  Total: 25 conditions × N games each
+  - 3 homogeneous conditions  (one per model)
+  - 6 heterogeneous conditions (all cross-model pairs)
+  Total: 9 conditions × N games each
 
 Options:
   -n NUM      Number of games per condition (default: $NUM_GAMES)
@@ -28,9 +28,9 @@ Options:
   -h          Show this help
 
 Examples:
-  $(basename "$0")                  # full experiment: 25 × 50 = 1250 games
-  $(basename "$0") -n 5            # quick test: 25 × 5 = 125 games
-  $(basename "$0") -n 10 --eval    # 250 games + evaluation
+  $(basename "$0")                 # full experiment: 9 × 50 = 450 games
+  $(basename "$0") -n 5            # quick test: 9 × 5 = 45 games
+  $(basename "$0") -n 10 --eval    # 90 games + evaluation
 EOF
     exit 0
 }

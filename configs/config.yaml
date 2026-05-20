@@ -1,7 +1,7 @@
 defaults:
   - game: default
   - map: simple_ship
-  - model: gpt5.2
+  - model: gpt5.5
   - experiment: homogeneous
   - _self_
 

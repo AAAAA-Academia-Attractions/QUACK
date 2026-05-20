@@ -1,12 +1,10 @@
-# QUACK🦆: Questioning, Understanding, and Assessing Collaborative Knowledge
+# QUACK🦆: Questioning, Understanding, and Auditing Collaborative Knowledge
 
-### A Multimodal Social Deduction Benchmark for Vision-Language Models
+### A Multimodal Social Deduction Environment for Vision-Language Model Agents
 
-Social deduction games are compelling testbeds for evaluating agents' theory of mind, deception, and social reasoning. Yet most existing benchmarks are *text-only*, preventing grounded verification of agents' claims against their actual behavior in partially observed environments.
+Recent work has increasingly used social deduction games to study reasoning, deception, coordination, and theory of mind in Large Language Model (LLM) agents. However, existing environments are typically evaluated through game outcomes such as win rates, and most remain limited to text-only interaction. As a result, it is difficult to determine whether an agent's reasoning is grounded in what it actually perceived and did, or to systematically identify the failure modes underlying its behavior.
 
-**QUACK** is the first *multimodal* social deduction benchmark designed for Vision-Language Models, built on a fully open-source engine for multimodal social deduction research. Agents navigate configurable graph-based map layouts with weighted corridors, operate under strict partial observability with same-room visibility, complete multi-tick location-bound tasks, and participate in emergency meetings with multi-round free-form discussion and voting. Each decision step provides a global map view, a local perceptual view, and structured textual state, requiring grounded multimodal reasoning over long-horizon episodes.
-
-Beyond environment design, QUACK introduces a structured evaluation protocol that measures task performance, social coordination, adversarial robustness, and behavioral linguistic consistency. We develop an automatic Statement Verification Pipeline that extracts spatial and behavioral claims from meeting utterances and validates them against engine-level ground-truth logs, enabling scalable auditing of deception, belief consistency, and action-speech alignment under partial observability.
+To address this gap, **QUACK** is an open-source environment and evaluation framework for auditing multimodal social reasoning in Vision-Language Model (VLM) agents. Agents navigate configurable graph-based maps, observe rendered global and local views, complete location-bound tasks, communicate through free-form discussion, and vote under hidden-role adversarial incentives. QUACK evaluates agents at three levels: **game outcomes, behavioral trajectories, and utterance-level consistency**. Its evaluation framework reconstructs agent trajectories and verifies dialogue against engine-level logs, enabling automatic identification of failures such as **spatial hallucination, unsupported accusation, deception collapse, and language-action inconsistency**. We evaluate 3 VLMs across 450 games and release the full engine, toolkit, and logs in this anonymous repo.
 
 ![Alt Text](assets/video.gif)
 
@@ -14,14 +12,14 @@ Beyond environment design, QUACK introduces a structured evaluation protocol tha
 
 ## Why This Project?
 
-Most existing social deduction agent benchmarks (Werewolf, Mafia, Avalon) are text-only — agents read and write natural language. This limits testing to LLM capabilities alone.
+Most existing social deduction agent environments (Werewolf, Mafia, Avalon) are text-only — agents read and write natural language. This limits the analysis to LLM capabilities alone and to coarse game-level outcomes.
 
-QUACK introduces a **spatial dimension**: agents navigate a discrete map, have limited local vision, and receive rendered map images as input. This means VLM agents must:
+QUACK introduces a **spatial dimension** and a **claim-verification layer**: agents navigate a discrete map, have limited local vision, receive rendered map images as input, and every utterance they produce during meetings is automatically grounded against engine-level logs. This makes it possible to audit VLM agents along four dimensions:
 
-1. **Read and interpret visual maps** — understand room layouts, task markers
-2. **Reason spatially** — plan movement routes based on weighted corridors, track encounters
-3. **Deduce socially** — identify impostors through discussion and voting
-4. **Act strategically** — balance task completion with survival and information gathering
+1. **Read and interpret visual maps** — understand room layouts, task markers, and visible bystanders.
+2. **Reason spatially** — plan movement routes over weighted corridors, track encounters, and remember witnessed traffic.
+3. **Deduce socially** — identify impostors through discussion and voting under partial observability.
+4. **Stay grounded** — utterances must be consistent with the agent's actual trajectory; lies, hallucinations, and unsupported accusations are flagged automatically.
 
 ---
 
@@ -54,33 +52,33 @@ python scripts/run_game.py video=false seed=42
 ### Run a Game (VLM Agents)
 
 ```bash
-# Create api_key.txt with your API key first
+# Create api_key.txt with your greatrouter key first
 echo "sk-your-key-here" > api_key.txt
 
-# Run with GPT-5.2 (default model)
+# Run with GPT-5.5 (default model)
 python scripts/run_game.py seed=42
 
-# Run with Claude Opus 4.6
-python scripts/run_game.py model=claude_opus4.6 seed=42
+# Run with Claude Opus 4.7
+python scripts/run_game.py model=claude_opus4.7 seed=42
 
-# Run with Gemini 3.1 Pro (uses streaming automatically)
+# Run with Gemini 3.1 Pro Preview (uses streaming automatically)
 python scripts/run_game.py model=gemini3.1pro seed=42
 
 # VLM agents with Simplified Chinese speech (简体中文)
 python scripts/run_game.py speak_chinese=true seed=42
 
-# Custom API endpoint
+# Custom API endpoint (e.g. domestic China backup node)
 python scripts/run_game.py base_url=https://endpoint.wendalog.com
 ```
 
 ### Heterogeneous Experiments
 
 ```bash
-# GPT-5.2 geese vs Claude Opus 4.6 duck
-python scripts/run_game.py experiment=heterogeneous model=gpt5.2 experiment.duck_model=claude_opus4.6 seed=42
+# GPT-5.5 geese vs Claude Opus 4.7 duck
+python scripts/run_game.py experiment=heterogeneous model=gpt5.5 experiment.duck_model=claude_opus4.7 seed=42
 
-# Claude geese vs Grok duck
-python scripts/run_game.py experiment=heterogeneous model=claude_opus4.6 experiment.duck_model=grok4 seed=42
+# Claude geese vs Gemini duck
+python scripts/run_game.py experiment=heterogeneous model=claude_opus4.7 experiment.duck_model=gemini3.1pro seed=42
 ```
 
 ### Batch Runs
@@ -90,39 +88,39 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Homogeneous Batch (`batch_homogeneous.sh`)
 
 ```bash
-# All 5 models × 50 games each (default)
+# All 3 models × 50 games each (default)
 ./scripts/batch_homogeneous.sh
 
 # Single model, 10 games
-./scripts/batch_homogeneous.sh -m gpt5.2 -n 10
+./scripts/batch_homogeneous.sh -m gpt5.5 -n 10
 
 # Two models, 5 games each, starting from seed 11
-./scripts/batch_homogeneous.sh -m gpt5.2,claude_opus4.6 -n 5 -s 11
+./scripts/batch_homogeneous.sh -m gpt5.5,claude_opus4.7 -n 5 -s 11
 
 # Skip video generation for faster runs
-./scripts/batch_homogeneous.sh -m gpt5.2 -n 10 -- video=false
+./scripts/batch_homogeneous.sh -m gpt5.5 -n 10 -- video=false
 ```
 
 #### Heterogeneous Batch (`batch_heterogeneous.sh`)
 
 ```bash
-# All cross-model pairs (20 pairs) × 50 games each
+# All cross-model pairs (6 pairs) × 50 games each
 ./scripts/batch_heterogeneous.sh
 
 # Specific goose/duck pair, 10 games
-./scripts/batch_heterogeneous.sh -g gpt5.2 -d claude_opus4.6 -n 10
+./scripts/batch_heterogeneous.sh -g gpt5.5 -d claude_opus4.7 -n 10
 
-# GPT-5.2 geese vs every other model as duck, 5 games each
-./scripts/batch_heterogeneous.sh -g gpt5.2 -d all -n 5
+# GPT-5.5 geese vs every other model as duck, 5 games each
+./scripts/batch_heterogeneous.sh -g gpt5.5 -d all -n 5
 ```
 
 #### Full Experiment Suite (`batch_full_experiment.sh`)
 
 ```bash
-# Full matrix: 6 homogeneous + 30 heterogeneous = 36 conditions × 50 games = 1800 games
+# Full matrix: 3 homogeneous + 6 heterogeneous = 9 conditions × 50 games = 450 games
 ./scripts/batch_full_experiment.sh
 
-# Quick test run: 36 conditions × 5 games = 180 games
+# Quick test run: 9 conditions × 5 games = 45 games
 ./scripts/batch_full_experiment.sh -n 5
 
 # Run everything + auto-evaluate at the end
@@ -132,14 +130,14 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Manual loop (alternative)
 
 ```bash
-# Run 50 games with Gemini 3.1 Pro
+# Run 50 games with Gemini 3.1 Pro Preview
 for seed in $(seq 1 50); do
     python scripts/run_game.py model=gemini3.1pro seed=$seed
 done
 
 # Run 50 heterogeneous games
 for seed in $(seq 1 50); do
-    python scripts/run_game.py experiment=heterogeneous model=gpt5.2 experiment.duck_model=claude_opus4.6 seed=$seed
+    python scripts/run_game.py experiment=heterogeneous model=gpt5.5 experiment.duck_model=claude_opus4.7 seed=$seed
 done
 ```
 
@@ -147,10 +145,10 @@ done
 
 ```bash
 # Regenerate render frames from a saved game log
-python scripts/replay_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl --output renders/replay/
+python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --output renders/replay/
 
 # Generate frames + assemble into video
-python scripts/replay_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl -o renders/replay/ --video replay.mp4 --fps 3
+python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl -o renders/replay/ --video replay.mp4 --fps 3
 ```
 
 ### Generate Videos from Existing Runs
@@ -160,7 +158,7 @@ python scripts/replay_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed4
 ./scripts/generate_videos.sh
 
 # Only for a specific model
-./scripts/generate_videos.sh game_logs/homogeneous/gpt5.2/
+./scripts/generate_videos.sh game_logs/homogeneous/gpt5.5/
 
 # Custom frame rate
 ./scripts/generate_videos.sh -f 2
@@ -173,19 +171,19 @@ python scripts/replay_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed4
 
 ```bash
 # Evaluate a single game (Tier 1 + Tier 2; auto-saves evaluation.json alongside game.jsonl)
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl
 
 # Include Tier 3 statement verification (requires LLM API key)
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl --tier3 --api-key YOUR_KEY
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --tier3 --api-key YOUR_KEY
 
-# Evaluate all GPT-5.2 homogeneous games
-python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.2/
+# Evaluate all GPT-5.5 homogeneous games
+python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/
 
 # Evaluate all homogeneous models at once
 python scripts/evaluate_batch.py game_logs/homogeneous/
 
 # Evaluate a specific heterogeneous condition
-python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.2_duck_claude_opus4.6/
+python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/
 
 # Evaluate everything
 python scripts/evaluate_batch.py game_logs/ --tier3 --api-key YOUR_KEY
@@ -199,28 +197,25 @@ QUACK uses [Hydra](https://hydra.cc/) for hierarchical configuration management.
 
 ```
 configs/
-├── config.yaml              # Main entry point (defaults + runtime options)
+├── config.yaml                # Main entry point (defaults + runtime options)
 ├── game/
-│   └── default.yaml          # Game rules (num_players, max_ticks, etc.)
+│   └── default.yaml           # Game rules (num_players, max_ticks, etc.)
 ├── map/
-│   └── simple_ship.yaml      # Map definition (rooms, corridors, tasks)
+│   └── simple_ship.yaml       # Map definition (rooms, corridors, tasks)
 ├── model/
-│   ├── gpt5.2.yaml           # GPT-5.2 (default)
-│   ├── gpt5.4.yaml           # GPT-5.4
-│   ├── gemini3.1pro.yaml     # Gemini 3.1 Pro (streaming)
-│   ├── claude_opus4.6.yaml   # Claude Opus 4.6
-│   ├── grok4.yaml            # Grok 4
-│   └── kimi2.5.yaml          # Kimi K2.5
+│   ├── gpt5.5.yaml            # GPT-5.5 (default)
+│   ├── claude_opus4.7.yaml    # Claude Opus 4.7
+│   └── gemini3.1pro.yaml      # Gemini 3.1 Pro Preview (streaming)
 └── experiment/
-    ├── homogeneous.yaml      # All players use the same model
-    └── heterogeneous.yaml    # Geese use one model, duck uses another
+    ├── homogeneous.yaml       # All players use the same model
+    └── heterogeneous.yaml     # Geese use one model, duck uses another
 ```
 
 Override any setting on the command line using Hydra's `key=value` syntax:
 
 ```bash
 # Override seed and model
-python scripts/run_game.py model=claude_opus4.6 seed=42
+python scripts/run_game.py model=claude_opus4.7 seed=42
 
 # Override game settings
 python scripts/run_game.py game.max_ticks=100 game.num_ducks=2
@@ -236,16 +231,15 @@ python scripts/run_game.py video=false god_view=false
 
 ## Supported Models
 
+QUACK currently ships with three frontier VLMs, all accessed through the same OpenAI-compatible greatrouter proxy (`https://endpoint.greatrouter.com` by default; `https://endpoint.wendalog.com` is available as a domestic-China backup node):
+
 | Config Name | Display Name | API Model ID | Streaming | Notes |
 |---|---|---|---|---|
-| `gpt5.2` | GPT-5.2 | `gpt-5.2` | No | Default model |
-| `gpt5.4` | GPT-5.4 | `gpt-5.4` | No | |
-| `gemini3.1pro` | Gemini 3.1 Pro | `gemini-3.1-pro-preview` | **Yes** | Requires streaming to avoid timeout; do NOT set max_tokens |
-| `claude_opus4.6` | Claude Opus 4.6 | `claude-opus-4-6` | No | |
-| `grok4` | Grok 4 | `grok-4` | No | |
-| `kimi2.5` | Kimi K2.5 | `Kimi-K2.5` | No | |
+| `gpt5.5` | GPT-5.5 | `gpt-5.5` | No | Default model |
+| `claude_opus4.7` | Claude Opus 4.7 | `claude-opus-4-7` | No | |
+| `gemini3.1pro` | Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | **Yes** | Requires streaming to avoid timeout; do **not** set `max_tokens` |
 
-All models use the same API key and base URL (`https://endpoint.greatrouter.com` by default).
+All three models share the same `api_key.txt` and `base_url`. Streaming behavior is controlled per-model via `requires_stream` in the model config and is handled transparently by the agent.
 
 ### Adding a New Model
 
@@ -270,7 +264,7 @@ Each experiment run produces a self-contained directory with everything needed f
 ```
 game_logs/
 ├── homogeneous/
-│   ├── gpt5.2/
+│   ├── gpt5.5/
 │   │   ├── 20260308_143022_seed42/
 │   │   │   ├── game.jsonl           # Structured event log
 │   │   │   ├── config.yaml          # Frozen Hydra config snapshot
@@ -284,19 +278,16 @@ game_logs/
 │   │   ├── 20260308_143522_seed43/
 │   │   │   └── ...
 │   │   └── ...
-│   ├── gpt5.4/
-│   ├── gemini3.1pro/
-│   ├── claude_opus4.6/
-│   ├── grok4/
-│   └── kimi2.5/
+│   ├── claude_opus4.7/
+│   └── gemini3.1pro/
 ├── heterogeneous/
-│   ├── geese_gpt5.2_duck_claude_opus4.6/
+│   ├── geese_gpt5.5_duck_claude_opus4.7/
 │   │   └── 20260308_150000_seed42/
 │   │       └── ...
 │   └── ...
-└── evaluation/                # Aggregated results (from batch evaluator)
-    ├── homogeneous_gpt5.2.json
-    ├── heterogeneous_geese_gpt5.2_duck_claude_opus4.6.json
+└── evaluation/                      # Aggregated results (from batch evaluator)
+    ├── homogeneous_gpt5.5.json
+    ├── heterogeneous_geese_gpt5.5_duck_claude_opus4.7.json
     └── summary.json
 ```
 
@@ -382,7 +373,7 @@ Numbers in parentheses = travel ticks. Each room has themed pixel-art decoration
 
 ## VLM Agent Architecture
 
-Each VLM agent (powered by a configurable model via OpenAI-compatible API) has:
+Each VLM agent (powered by a configurable model via the OpenAI-compatible greatrouter API) has:
 
 ### Vision Input (2 images per tick)
 
@@ -407,7 +398,7 @@ Agents receive role-specific strategy guides embedded in their system prompt:
 
 ### Streaming Support
 
-Some models (e.g. Gemini 3.1 Pro) require streaming to avoid timeouts. This is configured per-model via `requires_stream: true` in the model config. The VLM agent automatically uses streaming when configured.
+Some models (e.g. Gemini 3.1 Pro Preview) require streaming to avoid timeouts. This is configured per-model via `requires_stream: true` in the model config. The VLM agent automatically uses streaming when configured and never sets `max_tokens` (which can cause empty responses on the streaming endpoints).
 
 ### Rate Limiting
 
@@ -457,7 +448,7 @@ ffmpeg -framerate 3 -i renders/god_view/frame_%04d.png -c:v libx264 -pix_fmt yuv
   -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" god_view.mp4
 
 # Or use the replay script
-python scripts/replay_game.py game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl --video replay.mp4 --fps 3
+python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --video replay.mp4 --fps 3
 ```
 
 ---
@@ -540,8 +531,8 @@ Requires tick-by-tick game state reconstruction. The `GameReconstructor` replays
 The most novel component. For each meeting discussion message:
 
 1. **Claim extraction** — An LLM parses each statement into structured claims (location, sighting, activity, accusation, defense) with temporal references and normalized room names.
-2. **Ground-truth verification** — Each claim is checked against the `GameTimeline`. Location claims require >= 50% tick presence; sighting claims require co-location at any tick; activity claims check for matching task/movement events.
-3. **Metric computation** — Aggregates verdicts into truthfulness, deception, and detection rates.
+2. **Ground-truth verification** — Each claim is checked against the `GameTimeline`. Location claims require >= 50% tick presence (the threshold becomes duration-aware: `any_time`, `most_time`, or `entire_time`); sighting claims require co-location at any tick with a visibility check; activity claims check for matching task/movement/report events.
+3. **Metric computation** — Aggregates verdicts into truthfulness, deception, hallucination, and detection rates, surfacing failure modes like spatial hallucination, unsupported accusation, deception collapse, and language-action inconsistency.
 
 | Metric | Description |
 |--------|-------------|
@@ -573,16 +564,16 @@ from quack.evaluation import GameEvaluator, BatchEvaluator
 
 # Single game
 evaluator = GameEvaluator()
-result = evaluator.evaluate("game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl")
+result = evaluator.evaluate("game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl")
 print(result.tier1.winner)          # "goose"
 print(result.tier2.task_efficiency)  # 0.45
 
 # With Tier 3
 result = evaluator.evaluate(
-    "game_logs/homogeneous/gpt5.2/20260308_143022_seed42/game.jsonl",
+    "game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl",
     run_tier3=True,
     llm_api_key="sk-...",
-    llm_model="gpt-5.2",
+    llm_model="gpt-5.5",
 )
 print(result.tier3.goose_truthfulness)  # 0.89
 
@@ -621,13 +612,13 @@ QUACK/
 │   │   ├── prompt_builder.py  # System prompts with role-specific strategy guides
 │   │   └── memory.py          # Per-agent structured memory system
 │   ├── evaluation/
-│   │   ├── log_parser.py              # Parse JSONL logs into structured event lists
-│   │   ├── game_reconstructor.py      # Tick-by-tick state reconstruction (GameTimeline)
-│   │   ├── tier1_game_metrics.py      # Game-level metrics (outcomes, tasks, kills, meetings)
-│   │   ├── tier2_behavioral.py        # Behavioral metrics (spatial, voting, task efficiency)
+│   │   ├── log_parser.py                    # Parse JSONL logs into structured event lists
+│   │   ├── game_reconstructor.py            # Tick-by-tick state reconstruction (GameTimeline)
+│   │   ├── tier1_game_metrics.py            # Game-level metrics (outcomes, tasks, kills, meetings)
+│   │   ├── tier2_behavioral.py              # Behavioral metrics (spatial, voting, task efficiency)
 │   │   ├── tier3_statement_verification.py  # LLM claim extraction + ground-truth verification
-│   │   ├── evaluator.py              # Orchestrator (GameEvaluator, BatchEvaluator)
-│   │   └── report.py                 # Human-readable + JSON report generation
+│   │   ├── evaluator.py                     # Orchestrator (GameEvaluator, BatchEvaluator)
+│   │   └── report.py                        # Human-readable + JSON report generation
 │   ├── rendering/
 │   │   ├── map_renderer.py    # Global, local, god view + meeting frame renderer
 │   │   ├── sprites.py         # Procedural pixel-art character sprites
@@ -643,12 +634,9 @@ QUACK/
 │   ├── map/
 │   │   └── simple_ship.yaml   # 10-room ship map with weighted corridors
 │   ├── model/
-│   │   ├── gpt5.2.yaml        # GPT-5.2 (default)
-│   │   ├── gpt5.4.yaml        # GPT-5.4
-│   │   ├── gemini3.1pro.yaml  # Gemini 3.1 Pro (streaming)
-│   │   ├── claude_opus4.6.yaml# Claude Opus 4.6
-│   │   ├── grok4.yaml         # Grok 4
-│   │   └── kimi2.5.yaml       # Kimi K2.5
+│   │   ├── gpt5.5.yaml            # GPT-5.5 (default)
+│   │   ├── claude_opus4.7.yaml    # Claude Opus 4.7
+│   │   └── gemini3.1pro.yaml      # Gemini 3.1 Pro Preview (streaming)
 │   ├── experiment/
 │   │   ├── homogeneous.yaml   # All players same model
 │   │   └── heterogeneous.yaml # Different models for geese vs duck
@@ -662,7 +650,7 @@ QUACK/
 │   ├── batch_homogeneous.sh   # Batch runner for homogeneous experiments
 │   ├── batch_heterogeneous.sh # Batch runner for cross-model experiments
 │   ├── batch_full_experiment.sh # One-command full experiment suite
-│   └── generate_videos.sh    # Batch generate video.mp4 from god-view frames
+│   └── generate_videos.sh     # Batch generate video.mp4 from god-view frames
 ├── tests/
 │   └── test_evaluation/       # Unit tests for the evaluation pipeline
 ├── game_logs/                 # Experiment output (structured by model/condition)

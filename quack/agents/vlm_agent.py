@@ -42,7 +42,7 @@ class VLMAgent(BaseAgent):
         name: str,
         api_key: str,
         base_url: str = "https://endpoint.greatrouter.com",
-        model: str = "gpt-5.4",
+        model: str = "gpt-5.5",
         temperature: float = 0.7,
         speak_chinese: bool = False,
         requires_stream: bool = False,

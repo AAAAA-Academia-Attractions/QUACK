@@ -1,7 +1,7 @@
 """CLI: Evaluate a single game log through the QUACK evaluation pipeline.
 
 Usage:
-    python scripts/evaluate_game.py game_logs/homogeneous/gpt5.4/20260308_143022_seed42/game.jsonl
+    python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl
     python scripts/evaluate_game.py game_logs/game_XXXXX.jsonl   # legacy flat logs
 """
 
@@ -43,8 +43,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.2",
-        help="LLM model for Tier 3 claim extraction (default: gpt-5.2)",
+        default="gpt-5.5",
+        help="LLM model for Tier 3 claim extraction (default: gpt-5.5)",
     )
     parser.add_argument(
         "--map-config",

@@ -5,10 +5,10 @@
 # that contain frames but have no sibling video.mp4 yet.
 #
 # Usage:
-#   ./scripts/generate_videos.sh                          # all runs under game_logs/
-#   ./scripts/generate_videos.sh game_logs/homogeneous/gpt5.2/  # specific subtree
-#   ./scripts/generate_videos.sh -f 2                     # 2 fps
-#   ./scripts/generate_videos.sh --force                  # regenerate existing videos
+#   ./scripts/generate_videos.sh                                # all runs under game_logs/
+#   ./scripts/generate_videos.sh game_logs/homogeneous/gpt5.5/  # specific subtree
+#   ./scripts/generate_videos.sh -f 2                           # 2 fps
+#   ./scripts/generate_videos.sh --force                        # regenerate existing videos
 set -euo pipefail
 
 FPS=1
@@ -28,9 +28,9 @@ Options:
 
 Examples:
   $(basename "$0")                                        # all runs, 1 fps
-  $(basename "$0") game_logs/homogeneous/gpt5.2/          # specific model
+  $(basename "$0") game_logs/homogeneous/gpt5.5/          # specific model
   $(basename "$0") -f 2                                   # 2 fps
-  $(basename "$0") --force game_logs/homogeneous/gpt5.2/  # regenerate all
+  $(basename "$0") --force game_logs/homogeneous/gpt5.5/  # regenerate all
 EOF
     exit 0
 }

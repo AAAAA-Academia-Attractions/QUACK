@@ -426,3 +426,115 @@ python -m pytest -q
 
 - 26 new tests across 4 files; 0 regressions on the 99 pre-existing tests.
 - End-to-end smoke test: `python scripts/run_game.py video=false god_view=false seed=42` runs to completion; `python scripts/replay_game.py game_logs/.../game.jsonl --output /tmp/...` renders all frames including witness arrows without error.
+
+---
+
+## Supported-model refresh + project repositioning
+
+Branch: `feat/model-refresh`  
+Base: `main`
+
+### Summary
+
+Three coordinated, non-functional changes:
+
+1. **Narrow the supported VLMs to three** — `gpt5.5`, `claude_opus4.7`, and `gemini3.1pro` (all served through the greatrouter OpenAI-compatible proxy). Drop the five legacy model configs (`gpt5.2`, `gpt5.4`, `claude_opus4.6`, `grok4`, `kimi2.5`) and remove their references throughout the engine, scripts, evaluator, and documentation.
+2. **Update the default model** from `gpt5.2` → `gpt5.5` across the engine, the heterogeneous duck role, the evaluator Tier 3 defaults, and the agent class default.
+3. **Reposition QUACK from "benchmark" to "open-source environment and evaluation framework"** in `README.md`, updating the title to match the paper (`Questioning, Understanding, and Auditing Collaborative Knowledge in Multimodal Social Deduction Agents`) and aligning the abstract, motivation, and Tier-3 description with the four failure modes audited (spatial hallucination, unsupported accusation, deception collapse, language-action inconsistency).
+
+No engine behavior, log schema, or evaluation tier output is altered by this change. All 125 existing tests pass unchanged.
+
+### Files changed
+
+| File | Δ | Purpose |
+|------|---|---------|
+| `configs/model/gpt5.5.yaml` | **new** | GPT-5.5 (`model_id: gpt-5.5`, `requires_stream: false`) — default model |
+| `configs/model/claude_opus4.7.yaml` | **new** | Claude Opus 4.7 (`model_id: claude-opus-4-7`, `requires_stream: false`) |
+| `configs/model/gemini3.1pro.yaml` | unchanged | Gemini 3.1 Pro Preview (`model_id: gemini-3.1-pro-preview`, `requires_stream: true`) |
+| `configs/model/gpt5.2.yaml` | **deleted** | Replaced by `gpt5.5.yaml` |
+| `configs/model/gpt5.4.yaml` | **deleted** | Out of scope |
+| `configs/model/claude_opus4.6.yaml` | **deleted** | Replaced by `claude_opus4.7.yaml` |
+| `configs/model/grok4.yaml` | **deleted** | Out of scope |
+| `configs/model/kimi2.5.yaml` | **deleted** | Out of scope |
+| `configs/config.yaml` | +1 −1 | Default `model: gpt5.5` |
+| `configs/experiment/heterogeneous.yaml` | +1 −1 | Default `duck_model: gpt5.5` |
+| `quack/agents/vlm_agent.py` | +1 −1 | Default `model` parameter `gpt-5.5` |
+| `quack/evaluation/evaluator.py` | +2 −2 | Default `llm_model` for `GameEvaluator.evaluate` and `BatchEvaluator.evaluate_batch` is `gpt-5.5` |
+| `quack/evaluation/tier3_statement_verification.py` | +1 −1 | Default `model` for `StatementVerificationPipeline.__init__` is `gpt-5.5` |
+| `scripts/run_game.py` | +1 −1 | Docstring example refers to `claude_opus4.7` |
+| `scripts/evaluate_game.py` | +3 −3 | `--model` default + help text + docstring example use `gpt-5.5` / `gpt5.5` |
+| `scripts/evaluate_batch.py` | +4 −4 | `--model` default + help text + docstring examples use `gpt-5.5` / `gpt5.5` / `claude_opus4.7` |
+| `scripts/validate_tier3_audit.py` | +1 −1 | Example `LOG` path now points under `homogeneous/gpt5.5/` |
+| `scripts/batch_homogeneous.sh` | rewritten | `ALL_MODELS="gpt5.5 claude_opus4.7 gemini3.1pro"`, examples updated |
+| `scripts/batch_heterogeneous.sh` | rewritten | `ALL_MODELS="gpt5.5 claude_opus4.7 gemini3.1pro"`, examples updated |
+| `scripts/batch_full_experiment.sh` | +4 −4 | Help text reflects 3 homogeneous + 6 heterogeneous = 9 conditions × 50 = 450 games |
+| `scripts/generate_videos.sh` | +4 −4 | Help/usage examples reference `gpt5.5` paths |
+| `README.md` | full rewrite | New title (`Auditing` not `Assessing`), paper abstract verbatim as the lede, three-model table, framework positioning, all `gpt5.2`/`gpt5.4`/`grok4`/`kimi2.5`/`claude_opus4.6` examples replaced by `gpt5.5`/`claude_opus4.7`/`gemini3.1pro` |
+| `CLAUDE.md` | +6 −6 | Command examples and architecture blurb updated to reflect the three-model set and the framework framing |
+| `CHANGES.md` | +this section | This entry |
+
+### Detailed changes
+
+#### 1. Model registry
+
+- **New configs (2):**
+  - `configs/model/gpt5.5.yaml` — `name: gpt5.5`, `display_name: "GPT-5.5"`, `model_id: gpt-5.5`, `temperature: 0.7`, `requires_stream: false`.
+  - `configs/model/claude_opus4.7.yaml` — `name: claude_opus4.7`, `display_name: "Claude Opus 4.7"`, `model_id: claude-opus-4-7`, `temperature: 0.7`, `requires_stream: false`.
+- **Retained:** `configs/model/gemini3.1pro.yaml` (model_id `gemini-3.1-pro-preview`, `requires_stream: true` — required to avoid timeouts; `max_tokens` must remain unset).
+- **Deleted (5):** `gpt5.2.yaml`, `gpt5.4.yaml`, `claude_opus4.6.yaml`, `grok4.yaml`, `kimi2.5.yaml`.
+
+All three remaining models share `base_url: https://endpoint.greatrouter.com` (with `https://endpoint.wendalog.com` documented as a domestic backup) and a single `api_key.txt` file. The agent's `requires_stream` flag continues to drive between `client.chat.completions.create(stream=False)` and the streaming path that accumulates `chunk.choices[0].delta.content` — no code changes required.
+
+#### 2. Default model migration (`gpt5.2` → `gpt5.5`)
+
+- `configs/config.yaml`: `defaults.model` switched to `gpt5.5`.
+- `configs/experiment/heterogeneous.yaml`: `duck_model: "gpt5.5"`.
+- `quack/agents/vlm_agent.py`: `VLMAgent.__init__(..., model: str = "gpt-5.5", ...)`.
+- `quack/evaluation/evaluator.py`: `GameEvaluator.evaluate(..., llm_model="gpt-5.5", ...)` and `BatchEvaluator.evaluate_batch(..., llm_model="gpt-5.5", ...)`.
+- `quack/evaluation/tier3_statement_verification.py`: `StatementVerificationPipeline.__init__(..., model="gpt-5.5", ...)`.
+- `scripts/evaluate_game.py` / `scripts/evaluate_batch.py`: `--model` argparse default `gpt-5.5` and help text updated accordingly.
+- `scripts/validate_tier3_audit.py`: example `LOG` path moved from `homogeneous/gpt5.2/...` to `homogeneous/gpt5.5/...`.
+- `scripts/run_game.py`: docstring example `model=claude_opus4.7`.
+
+#### 3. Batch scripts
+
+- `scripts/batch_homogeneous.sh` and `scripts/batch_heterogeneous.sh` have `ALL_MODELS="gpt5.5 claude_opus4.7 gemini3.1pro"`, and every help/example line now uses one of the three supported names.
+- `scripts/batch_full_experiment.sh` documents the new matrix size: **3 homogeneous + 6 heterogeneous = 9 conditions** (down from 6 + 30 = 36). At 50 seeds/condition this becomes 450 games — matching the paper abstract.
+- `scripts/generate_videos.sh` help/usage text uses `homogeneous/gpt5.5/` as the example path.
+
+#### 4. Documentation
+
+- `README.md` is rewritten end-to-end:
+  - **Title** now reads `Questioning, Understanding, and Auditing Collaborative Knowledge` (was `Assessing`), matching the paper.
+  - **Subtitle** now reads `A Multimodal Social Deduction Environment for Vision-Language Model Agents` (was `Benchmark`).
+  - **Abstract** is taken from the paper verbatim and replaces the previous "benchmark for VLMs" framing. It explicitly names QUACK as "an open-source environment and evaluation framework" and lists the four failure modes (spatial hallucination, unsupported accusation, deception collapse, language-action inconsistency).
+  - **Supported Models** section is reduced to a 3-row table covering `gpt5.5`, `claude_opus4.7`, and `gemini3.1pro`, with a note that all three share the same greatrouter endpoint and that the streaming behavior is controlled per-model via `requires_stream`.
+  - **Quick Start, Heterogeneous, Batch Runs, Replay, Generate Videos, Evaluate, Output Structure, Configuration tree, Architecture tree** sections all have their example commands and directory listings updated to reference the three supported model names exclusively. Hetero pair count corrected from 20 to 6; full-matrix count corrected from 1250/1800 to 450.
+  - **Tier 3 — Statement Verification** section now points out that the verifier surfaces the four named failure modes and that the location verifier uses duration-aware semantics (preserving the threshold tiers introduced in the Tier 3 fix earlier in this changelog).
+- `CLAUDE.md`:
+  - High-level structure paragraph rewords QUACK from "designed as a benchmark for Vision-Language Models" to "designed as an open-source environment and evaluation framework for auditing multimodal social reasoning in Vision-Language Model agents".
+  - All `gpt5.2` / `claude_opus4.6` command examples replaced with `gpt5.5` / `claude_opus4.7`.
+
+### Backward compatibility
+
+- **Game engine:** no behavior change; no event-schema change; existing `game.jsonl` logs still parse and replay.
+- **Evaluation:** Tier 1 / Tier 2 / Tier 3 metric keys and `EvaluationResult.to_dict()` shape unchanged. The default LLM used by Tier 3 differs (`gpt-5.2` → `gpt-5.5`), but `--model` overrides remain available everywhere.
+- **Logs from deleted model configs** (e.g. existing `game_logs/homogeneous/gpt5.2/...`) still replay and evaluate correctly — the evaluator reads `game.jsonl` rather than model names. Only the helper *scripts* no longer enumerate those models in their `ALL_MODELS` lists.
+- **VLMAgent API** is unchanged. Existing callers that pass an explicit `model=` argument are unaffected; only the default value changed.
+
+### Validation
+
+```bash
+# Tests
+python -m pytest -q
+# 125 passed
+
+# Smoke run with the new default model on random agents (no API key required)
+python scripts/run_game.py seed=42 video=false god_view=false game.max_ticks=20
+# Output: game_logs/homogeneous/gpt5.5/<timestamp>_seed42/{game.jsonl,config.yaml}
+
+# Verify no stray references to removed models in code/docs/configs (CHANGES.md is historical and intentionally retained)
+rg 'gpt5\.2|gpt5\.4|grok4|kimi2\.5|claude_opus4\.6|claude-opus-4-6|grok-4|Kimi-K2\.5|gpt-5\.2|gpt-5\.4' \
+   --glob '!CHANGES.md' --glob '!game_logs/**' --glob '!run_game.log'
+# (no matches)
+```

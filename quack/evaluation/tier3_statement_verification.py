@@ -783,7 +783,7 @@ class StatementVerificationPipeline:
         timeline: GameTimeline,
         game_map: GameMap,
         api_key: str = "",
-        model: str = "gpt-5.2",
+        model: str = "gpt-5.5",
         base_url: str = "",
     ) -> None:
         self.events = events
