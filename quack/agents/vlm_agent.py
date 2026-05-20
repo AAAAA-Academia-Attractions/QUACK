@@ -10,6 +10,7 @@ from typing import Any
 
 from PIL import Image
 
+from quack.agents.action_format import combine_action_and_say
 from quack.agents.base_agent import BaseAgent
 from quack.agents.memory import AgentMemory
 from quack.agents.prompt_builder import (build_action_prompt,
@@ -121,10 +122,11 @@ class VLMAgent(BaseAgent):
 
         response = await self._call_vlm(messages)
         action = self._parse_action(response, observation.get("available_actions", []))
+        result = combine_action_and_say(action, response)
 
-        self.memory.tick_history[-1].action = action
-        logger.info("[%s] action=%s (raw: %s)", self.name, action, response[:100])
-        return action
+        self.memory.tick_history[-1].action = result
+        logger.info("[%s] action=%s (raw: %s)", self.name, result, response[:100])
+        return result
 
     async def speak(self, observation: dict[str, Any]) -> str:
         user_text = build_discussion_prompt(observation, self.memory)
@@ -156,6 +158,9 @@ class VLMAgent(BaseAgent):
             f"{msg.get('name', '?')}: {msg.get('message', '')}"
             for msg in observation.get("room_chat", [])
         ]
+        transit_obs = observation.get("transit_observations", {}) or {}
+        departures = list(transit_obs.get("departures", []))
+        arrivals = list(transit_obs.get("arrivals", []))
         self.memory.record_tick(
             tick=observation.get("tick", 0),
             room=observation.get("current_room", "?"),
@@ -165,6 +170,8 @@ class VLMAgent(BaseAgent):
             chats_heard=room_chat,
             in_transit=observation.get("in_transit", False),
             moving_to=observation.get("moving_to", ""),
+            departures=departures,
+            arrivals=arrivals,
         )
 
     def _collect_images(self) -> list[Image.Image]:

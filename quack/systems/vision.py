@@ -86,6 +86,30 @@ class VisionSystem:
             visible_bodies=visible_bodies,
         )
 
+    def get_witnessed_movements(
+        self, player: Player, state: GameState,
+    ) -> list[dict[str, Any]]:
+        """Filter state.tick_movements to events the given player can witness.
+
+        Stationary witnesses in room R see departures from R and arrivals into R.
+        Players in transit see nothing here (corridor co-travelers are exposed
+        via compute_visibility / visible_players instead).
+        """
+        if player.is_in_transit:
+            return []
+        room = player.current_room
+        events = getattr(state, "tick_movements", []) or []
+        result: list[dict[str, Any]] = []
+        for ev in events:
+            if ev.get("player_id") == player.player_id:
+                continue
+            etype = ev.get("type")
+            if etype == "departed" and ev.get("from_room") == room:
+                result.append(ev)
+            elif etype == "arrived" and ev.get("to_room") == room:
+                result.append(ev)
+        return result
+
     def build_observation(
         self,
         player: Player,
@@ -108,21 +132,56 @@ class VisionSystem:
             for n in neighbors
         ]
 
+        witnessed = self.get_witnessed_movements(player, state)
+        departures = [
+            {
+                "id": ev["player_id"],
+                "name": state.players[ev["player_id"]].name
+                    if ev["player_id"] in state.players else ev["player_id"],
+                "to_room": ev["to_room"],
+                "multi_tick": bool(ev.get("multi_tick", False)),
+            }
+            for ev in witnessed
+            if ev.get("type") == "departed"
+        ]
+        arrivals = [
+            {
+                "id": ev["player_id"],
+                "name": state.players[ev["player_id"]].name
+                    if ev["player_id"] in state.players else ev["player_id"],
+                "from_room": ev["from_room"],
+            }
+            for ev in witnessed
+            if ev.get("type") == "arrived"
+        ]
+
+        visible_players_out: list[dict[str, Any]] = []
+        for pid in vis.visible_players:
+            other = state.players[pid]
+            entry: dict[str, Any] = {
+                "id": pid,
+                "name": other.name,
+                "room": other.current_room,
+            }
+            if player.is_in_transit and other.is_in_transit:
+                entry["in_transit"] = True
+                entry["moving_to"] = other.moving_to
+                same_dir = (
+                    other.current_room == player.current_room
+                    and other.moving_to == player.moving_to
+                )
+                entry["co_direction"] = "same" if same_dir else "opposite"
+            visible_players_out.append(entry)
+
         return {
+            "tick": state.current_tick,
             "current_room": player.current_room,
             "in_transit": player.is_in_transit,
             "moving_to": player.moving_to if player.is_in_transit else None,
             "move_ticks_remaining": player.move_ticks_remaining if player.is_in_transit else 0,
             "visible_rooms": sorted(vis.visible_rooms),
             "fog_revealed_rooms": sorted(all_revealed),
-            "visible_players": [
-                {
-                    "id": pid,
-                    "name": state.players[pid].name,
-                    "room": state.players[pid].current_room,
-                }
-                for pid in vis.visible_players
-            ],
+            "visible_players": visible_players_out,
             "visible_bodies": [
                 {
                     "id": bid,
@@ -151,4 +210,8 @@ class VisionSystem:
             "kill_cooldown": player.kill_cooldown if player.team.value == "duck" else None,
             # Free-roam chat messages spoken in this room (most recent tick).
             "room_chat": list(getattr(state, "room_messages", {}).get(player.current_room, [])),
+            "transit_observations": {
+                "departures": departures,
+                "arrivals": arrivals,
+            },
         }

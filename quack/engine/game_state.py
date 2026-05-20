@@ -92,6 +92,12 @@ class GameState:
     # Free-roam chat: messages spoken during the current tick, grouped by room.
     # Reset at the start of each free-roam tick.
     room_messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # Witnessed movements for the current free-roam tick. Each entry:
+    # {"type": "departed"|"arrived", "player_id": str, "from_room": str,
+    #  "to_room": str, "multi_tick": bool, "tick": int}.
+    # Cleared at the start of every free-roam tick. Stationary witnesses in
+    # from_room (departures) or to_room (arrivals) see the matching events.
+    tick_movements: list[dict[str, Any]] = field(default_factory=list)
     max_ticks: int = 200
 
     # Meeting state

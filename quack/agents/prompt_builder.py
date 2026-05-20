@@ -213,10 +213,37 @@ def build_action_prompt(
 
     visible = observation.get("visible_players", [])
     if visible:
-        player_strs = [f"{p['name']} (in {p['room']})" for p in visible]
+        player_strs: list[str] = []
+        for p in visible:
+            if p.get("in_transit"):
+                co_dir = p.get("co_direction")
+                if co_dir == "same":
+                    player_strs.append(
+                        f"{p['name']} (corridor, going SAME way as you)"
+                    )
+                elif co_dir == "opposite":
+                    player_strs.append(
+                        f"{p['name']} (corridor, going OPPOSITE way from you)"
+                    )
+                else:
+                    player_strs.append(f"{p['name']} (in corridor)")
+            else:
+                player_strs.append(f"{p['name']} (in {p['room']})")
         lines.append(f"Visible players: {', '.join(player_strs)}")
     else:
         lines.append("Visible players: none — you are alone")
+
+    transit_obs = observation.get("transit_observations", {}) or {}
+    departures = transit_obs.get("departures", [])
+    arrivals = transit_obs.get("arrivals", [])
+    if departures or arrivals:
+        lines.append("")
+        lines.append("=== MOVEMENT AROUND YOU (this tick) ===")
+        for ev in departures:
+            mt = " (multi-tick)" if ev.get("multi_tick") else ""
+            lines.append(f"  {ev['name']} LEFT toward {ev['to_room']}{mt}")
+        for ev in arrivals:
+            lines.append(f"  {ev['name']} ARRIVED from {ev['from_room']}")
 
     bodies = observation.get("visible_bodies", [])
     if bodies:
@@ -324,6 +351,9 @@ def build_discussion_prompt(
         lines.append("=== YOUR OBSERVATIONS THIS ROUND ===")
         lines.append(f"Your route: {memory.get_route_description()}")
         lines.append(f"Player encounters:\n{memory.build_encounter_summary()}")
+        witness_summary = memory.build_witness_summary()
+        if witness_summary:
+            lines.append(f"Witnessed movements:\n{witness_summary}")
         if memory.meeting_history:
             lines.append(f"\nPrevious meetings:\n{memory.build_meeting_summary()}")
 
@@ -355,8 +385,12 @@ def build_vote_prompt(
     if dead:
         lines.append(f"Dead players: {', '.join(dead)}")
 
-    if memory and memory.meeting_history:
-        lines.append(f"\nPast meetings:\n{memory.build_meeting_summary()}")
+    if memory:
+        witness_summary = memory.build_witness_summary()
+        if witness_summary:
+            lines.append(f"\nYour witnessed movements this round:\n{witness_summary}")
+        if memory.meeting_history:
+            lines.append(f"\nPast meetings:\n{memory.build_meeting_summary()}")
 
     lines.append("\n=== VOTABLE PLAYERS ===")
     for p in observation.get("votable_players", []):

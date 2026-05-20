@@ -154,3 +154,16 @@ class TestGameTimeline:
         bounds = timeline.get_round_boundaries()
         assert len(bounds) == 1
         assert bounds[0] == (0, 1)
+
+    def test_free_roam_segments_after_reconstruction(self, minimal_game_events, simple_map) -> None:
+        """Reconstructed timeline should have correct free_roam_segments."""
+        timeline = GameReconstructor(minimal_game_events, simple_map).reconstruct()
+        assert len(timeline.free_roam_segments) == 2
+        assert timeline.free_roam_segments[0] == {"start": 0, "end": 6}
+        assert timeline.free_roam_segments[1]["start"] == 7
+
+    def test_meeting_preceding_free_roam_index(self, minimal_game_events, simple_map) -> None:
+        """Meeting boundaries should link to their preceding free-roam segment."""
+        timeline = GameReconstructor(minimal_game_events, simple_map).reconstruct()
+        assert len(timeline.meeting_boundaries) == 1
+        assert timeline.meeting_boundaries[0]["preceding_free_roam_index"] == 0

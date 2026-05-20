@@ -265,8 +265,9 @@ class GameEngine:
 
     async def _run_free_roam_tick(self) -> None:
         self.state.current_tick += 1
-        # Reset per-tick free-roam chat messages.
+        # Reset per-tick free-roam chat messages and witnessed movements.
         self.state.room_messages.clear()
+        self.state.tick_movements.clear()
         self.event_bus.emit(GameEvent(
             event_type=EventType.TICK_START,
             data={"tick": self.state.current_tick},
@@ -376,12 +377,14 @@ class GameEngine:
         )
 
         # Local view: only shows players/bodies in visible rooms
+        witnessed = self.vision_system.get_witnessed_movements(player, self.state)
         local_img = self.renderer.render_local_view(
             state=self.state,
             player=player,
             visible_rooms=vis.visible_rooms,
             visible_players=vis.visible_players,
             visible_bodies=vis.visible_bodies,
+            witnessed_events=witnessed,
         )
 
         if hasattr(agent, "set_images"):
@@ -438,13 +441,28 @@ class GameEngine:
             return
         weight = self.game_map.get_corridor_weight(player.current_room, target_room)
         if weight <= 1:
-            # Instant move
             old_room = player.current_room
             player.current_room = target_room
             player.visited_rooms.add(target_room)
             self.vision_system.update_visit(
                 player.player_id, target_room, self.state.current_tick,
             )
+            self.state.tick_movements.append({
+                "type": "departed",
+                "player_id": player.player_id,
+                "from_room": old_room,
+                "to_room": target_room,
+                "multi_tick": False,
+                "tick": self.state.current_tick,
+            })
+            self.state.tick_movements.append({
+                "type": "arrived",
+                "player_id": player.player_id,
+                "from_room": old_room,
+                "to_room": target_room,
+                "multi_tick": False,
+                "tick": self.state.current_tick,
+            })
             self.event_bus.emit(GameEvent(
                 event_type=EventType.PLAYER_MOVED,
                 data={
@@ -455,15 +473,23 @@ class GameEngine:
                 tick=self.state.current_tick,
             ))
         else:
-            # Multi-tick travel
-            player.moving_from = player.current_room
+            origin_room = player.current_room
+            player.moving_from = origin_room
             player.moving_to = target_room
-            player.move_ticks_remaining = weight - 1  # 1 tick used this turn
+            player.move_ticks_remaining = weight - 1
+            self.state.tick_movements.append({
+                "type": "departed",
+                "player_id": player.player_id,
+                "from_room": origin_room,
+                "to_room": target_room,
+                "multi_tick": True,
+                "tick": self.state.current_tick,
+            })
             self.event_bus.emit(GameEvent(
                 event_type=EventType.PLAYER_MOVED,
                 data={
                     "player_id": player.player_id,
-                    "from": player.current_room,
+                    "from": origin_room,
                     "to": target_room,
                     "ticks_remaining": player.move_ticks_remaining,
                 },
@@ -477,14 +503,24 @@ class GameEngine:
                 continue
             player.move_ticks_remaining -= 1
             if player.move_ticks_remaining <= 0:
-                player.current_room = player.moving_to
-                player.visited_rooms.add(player.moving_to)
+                origin = player.moving_from
+                destination = player.moving_to
+                player.current_room = destination
+                player.visited_rooms.add(destination)
                 self.vision_system.update_visit(
-                    player.player_id, player.moving_to, self.state.current_tick,
+                    player.player_id, destination, self.state.current_tick,
                 )
                 player.moving_from = ""
                 player.moving_to = ""
                 player.move_ticks_remaining = 0
+                self.state.tick_movements.append({
+                    "type": "arrived",
+                    "player_id": player.player_id,
+                    "from_room": origin,
+                    "to_room": destination,
+                    "multi_tick": True,
+                    "tick": self.state.current_tick,
+                })
 
     # ---- Discussion ----
 

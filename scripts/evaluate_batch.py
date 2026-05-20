@@ -112,6 +112,12 @@ def main() -> None:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--save-tier3-audit",
+        action="store_true",
+        default=False,
+        help="Write per-claim audit to tier3_claims.jsonl alongside each game's evaluation.json",
+    )
     args = parser.parse_args()
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -152,6 +158,7 @@ def main() -> None:
                 llm_api_key=api_key,
                 llm_model=args.model,
                 llm_base_url=args.base_url,
+                save_tier3_audit=args.save_tier3_audit,
             )
             all_results.append(result)
             condition_results.setdefault(condition, []).append(result)

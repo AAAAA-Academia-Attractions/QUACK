@@ -41,6 +41,7 @@ class GameTimeline:
         self.player_names: dict[str, str] = {}
         self.player_teams: dict[str, str] = {}
         self.meeting_boundaries: list[dict[str, Any]] = []
+        self.free_roam_segments: list[dict[str, int]] = []
 
     def get_player_room(self, player_id: str, tick: int) -> str | None:
         """Return the room a player was in at a given tick, or None if unknown."""
@@ -101,22 +102,9 @@ class GameTimeline:
         A round is the free-roam period between meetings (or game start to
         first meeting, or last meeting to game end).
         """
-        if not self.meeting_boundaries:
+        if not self.free_roam_segments:
             return [(0, self.max_tick)]
-
-        boundaries = []
-        prev_end = 0
-        for mb in self.meeting_boundaries:
-            meeting_tick = mb["meeting_tick"]
-            if meeting_tick > prev_end:
-                boundaries.append((prev_end, meeting_tick - 1))
-            resume_tick = mb.get("resume_tick", meeting_tick)
-            prev_end = resume_tick
-
-        if prev_end <= self.max_tick:
-            boundaries.append((prev_end, self.max_tick))
-
-        return boundaries
+        return [(seg["start"], seg["end"]) for seg in self.free_roam_segments]
 
 
 def hop_distance(game_map: GameMap, room_a: str, room_b: str) -> int:
@@ -195,6 +183,7 @@ class GameReconstructor:
 
         events_by_tick = self._group_events_by_tick()
         phase = "free_roam"
+        free_roam_segment_start = 0
         post_meeting_respawn_pending = False
 
         for tick in range(1, max_tick + 1):
@@ -266,11 +255,18 @@ class GameReconstructor:
                     # Cancel all transit
                     transit.clear()
                     meeting_tick = tick
-                    # Record meeting boundary start
+                    # Record the preceding free-roam segment
+                    if tick - 1 >= free_roam_segment_start:
+                        timeline.free_roam_segments.append({
+                            "start": free_roam_segment_start,
+                            "end": tick - 1,
+                        })
+                    preceding_idx = len(timeline.free_roam_segments) - 1 if timeline.free_roam_segments else None
                     timeline.meeting_boundaries.append({
                         "meeting_tick": meeting_tick,
                         "meeting_type": et,
                         "resume_tick": None,
+                        "preceding_free_roam_index": preceding_idx,
                     })
 
                 elif et == "player_ejected":
@@ -290,6 +286,7 @@ class GameReconstructor:
                         # Positions will be inferred from next events
                         if timeline.meeting_boundaries:
                             timeline.meeting_boundaries[-1]["resume_tick"] = tick
+                        free_roam_segment_start = tick
                     else:
                         phase = new_phase
 
@@ -316,6 +313,13 @@ class GameReconstructor:
                     is_alive=is_alive.get(pid, False),
                     action=action,
                 ))
+
+        # Record the final free-roam segment (after last meeting to game end)
+        if phase == "free_roam" and free_roam_segment_start <= max_tick:
+            timeline.free_roam_segments.append({
+                "start": free_roam_segment_start,
+                "end": max_tick,
+            })
 
         # Fill in resume_tick for any meetings that didn't get one
         for mb in timeline.meeting_boundaries:
