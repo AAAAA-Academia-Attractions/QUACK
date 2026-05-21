@@ -71,6 +71,21 @@ def _is_retryable_error(exc: BaseException) -> bool:
         pass
 
     try:
+        import anthropic  # type: ignore
+        if isinstance(
+            exc,
+            (
+                anthropic.RateLimitError,
+                anthropic.APITimeoutError,
+                anthropic.APIConnectionError,
+                anthropic.InternalServerError,
+            ),
+        ):
+            return True
+    except Exception:
+        pass
+
+    try:
         import httpx  # type: ignore
         if isinstance(
             exc,
@@ -109,14 +124,21 @@ class VLMAgent(BaseAgent):
         temperature: float | None = None,
         speak_chinese: bool = False,
         requires_stream: bool = False,
+        provider: str = "openai",
+        max_tokens: int | None = None,
     ):
         super().__init__(player_id, name)
+        self.provider = provider
         self.model = model
         self.temperature = temperature
         self.api_key = api_key
         self.base_url = base_url
         self.speak_chinese = speak_chinese
         self.requires_stream = requires_stream
+        # Anthropic's Messages API requires ``max_tokens`` on every call.
+        # OpenAI-compatible providers (greatrouter) ignore it for non-streaming
+        # frontier models, so we only forward it when the model config sets it.
+        self.max_tokens = max_tokens
 
         self._system_prompt = ""
         self.memory = AgentMemory(name)
@@ -132,13 +154,23 @@ class VLMAgent(BaseAgent):
 
     def _get_client(self):
         if self._client is None:
-            from openai import OpenAI
-            self._client = OpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-                max_retries=3,
-                timeout=60.0,
-            )
+            if self.provider == "anthropic":
+                import anthropic
+                # Hit api.anthropic.com directly — the SDK uses that by
+                # default, no base_url override needed.
+                self._client = anthropic.Anthropic(
+                    api_key=self.api_key,
+                    max_retries=3,
+                    timeout=60.0,
+                )
+            else:
+                from openai import OpenAI
+                self._client = OpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    max_retries=3,
+                    timeout=60.0,
+                )
         return self._client
 
     async def on_game_start(
@@ -311,12 +343,18 @@ class VLMAgent(BaseAgent):
         return kwargs
 
     async def _call_vlm_sync(self, client: Any, oai_messages: list[dict]) -> str:
+        if self.provider == "anthropic":
+            return self._call_anthropic_sync(client, oai_messages)
         response = client.chat.completions.create(
             **self._build_create_kwargs(oai_messages),
         )
         return response.choices[0].message.content or ""
 
     async def _call_vlm_stream(self, client: Any, oai_messages: list[dict]) -> str:
+        if self.provider == "anthropic":
+            # No Claude model currently requires streaming; if a future one
+            # does, accumulate text deltas from client.messages.stream.
+            return self._call_anthropic_sync(client, oai_messages)
         response = client.chat.completions.create(
             **self._build_create_kwargs(oai_messages),
             stream=True,
@@ -326,6 +364,111 @@ class VLMAgent(BaseAgent):
             if chunk.choices and chunk.choices[0].delta.content is not None:
                 result += chunk.choices[0].delta.content
         return result
+
+    # ------------------------------------------------------------------
+    # Anthropic-specific call path
+    # ------------------------------------------------------------------
+
+    def _call_anthropic_sync(self, client: Any, oai_messages: list[dict]) -> str:
+        """Call the Anthropic Messages API.
+
+        Translates the OpenAI-style messages used everywhere else in the
+        codebase to Anthropic's format: pull the ``system`` message out into
+        a top-level parameter, and convert each ``image_url`` content part
+        into an ``image`` block with a ``base64`` source.
+        """
+        system_prompt, anth_messages = self._to_anthropic_messages(oai_messages)
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            # Anthropic requires max_tokens. Fall back to a reasonable
+            # default if the model config didn't set one.
+            "max_tokens": self.max_tokens or 4096,
+            "messages": anth_messages,
+        }
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
+
+        message = client.messages.create(**kwargs)
+        if not getattr(message, "content", None):
+            return ""
+        # The response is a list of content blocks (text, tool_use, ...).
+        # Concatenate all text blocks; tool_use blocks are not expected here.
+        return "".join(
+            getattr(block, "text", "")
+            for block in message.content
+            if getattr(block, "type", "") == "text"
+        )
+
+    @staticmethod
+    def _to_anthropic_messages(
+        oai_messages: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Translate OpenAI-format messages to Anthropic's Messages API format.
+
+        Returns ``(system_prompt, anthropic_messages)`` where:
+
+        * the ``system`` role is removed from the message list and returned
+          separately (Anthropic uses a top-level ``system=`` param);
+        * each ``image_url`` content part with a ``data:...;base64,...`` URL
+          is rewritten as an ``image`` block whose ``source`` is the raw
+          base64 payload and the matching ``media_type``;
+        * text parts pass through unchanged.
+        """
+        system_chunks: list[str] = []
+        out: list[dict[str, Any]] = []
+        for msg in oai_messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                if isinstance(content, str):
+                    system_chunks.append(content)
+                elif isinstance(content, list):
+                    system_chunks.extend(
+                        part.get("text", "")
+                        for part in content
+                        if part.get("type") == "text"
+                    )
+                continue
+
+            if isinstance(content, str):
+                out.append({"role": role, "content": content})
+                continue
+
+            blocks: list[dict[str, Any]] = []
+            for part in content or []:
+                ptype = part.get("type")
+                if ptype == "text":
+                    blocks.append({"type": "text", "text": part.get("text", "")})
+                elif ptype == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    media_type = "image/png"
+                    data = url
+                    if url.startswith("data:") and "," in url:
+                        header, data = url.split(",", 1)
+                        # header looks like "data:image/png;base64"
+                        try:
+                            media_type = header.split(":", 1)[1].split(";", 1)[0]
+                        except Exception:
+                            media_type = "image/png"
+                    blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        },
+                    })
+                elif ptype == "image":
+                    # Already in Anthropic format — pass through.
+                    blocks.append(part)
+            out.append({"role": role, "content": blocks})
+
+        system_prompt = "\n\n".join(s for s in system_chunks if s)
+        return system_prompt, out
 
     def _convert_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert internal message format to OpenAI SDK format."""

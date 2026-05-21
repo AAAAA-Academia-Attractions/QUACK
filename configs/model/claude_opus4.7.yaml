@@ -1,7 +1,15 @@
 name: "claude_opus4.7"
 display_name: "Claude Opus 4.7"
 model_id: "claude-opus-4-7"
-# Frontier greatrouter models only accept the default temperature (1).
-# Leave null to omit the field from API calls.
+# Use the official Anthropic API directly instead of the greatrouter proxy.
+# Rate limiting on the proxy was too aggressive for Claude Opus, so the agent
+# reads the key from ``claude_key.txt`` (or ``$ANTHROPIC_API_KEY``) and talks
+# to ``https://api.anthropic.com`` via the ``anthropic`` SDK.
+provider: "anthropic"
+# Claude Opus accepts arbitrary temperatures; leaving null to use the SDK
+# default (which is 1.0 for the Messages API).
 temperature: null
 requires_stream: false
+# Anthropic requires ``max_tokens`` on every call. 4096 is generous enough
+# for our action / speech / vote responses.
+max_tokens: 4096

@@ -27,6 +27,7 @@ Thumbs.db
 game_logs/
 renders/
 api_key.txt
+claude_key.txt
 god_view*.mp4
 outputs/
 batch_results.json
