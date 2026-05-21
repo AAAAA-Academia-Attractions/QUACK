@@ -872,6 +872,8 @@ class MapRenderer:
         vision_system: object,
         event_log: list[str] | None = None,
         tick: int = 0,
+        frame_idx: int | None = None,
+        phase_override: str | None = None,
     ) -> Image.Image:
         """Render a god-view: all players, vision halos, roles, actions, event log,
         plus a grid of per-player local views at the bottom."""
@@ -944,7 +946,18 @@ class MapRenderer:
                     if t.is_complete:
                         completed += 1
 
-        hud_left = f"GOD VIEW  |  Tick: {tick}  |  Phase: {state.phase.value.replace('_', ' ').title()}"
+        phase_label = (
+            phase_override
+            if phase_override is not None
+            else state.phase.value.replace("_", " ").title()
+        )
+        if frame_idx is not None:
+            hud_left = (
+                f"GOD VIEW  |  Frame {frame_idx:04d}  |  Tick: {tick}  |  "
+                f"Phase: {phase_label}"
+            )
+        else:
+            hud_left = f"GOD VIEW  |  Tick: {tick}  |  Phase: {phase_label}"
         draw.text((16, 16), hud_left, fill=TEXT_WHITE, font=self._font_xl)
 
         hud_right = f"Tasks: {completed}/{total_tasks}  |  Alive: {len(state.alive_players)}/{len(state.players)}"

@@ -91,7 +91,14 @@ class TestGameReconstructor:
         assert timeline.meeting_boundaries[0]["meeting_tick"] == 7
 
     def test_multi_tick_travel(self, simple_map) -> None:
-        """Test that multi-tick travel is reconstructed correctly."""
+        """Test that multi-tick travel is reconstructed correctly.
+
+        Weight-W corridor in the engine logs ``ticks_remaining = W`` on the
+        action tick, then the reconstructor decrements that counter at the
+        start of every subsequent tick — so arrival happens at
+        ``action_tick + W``. For weight-2 (cafeteria -> oxygen) this means
+        the player is in transit on ticks 1 and 2 and only arrives at tick 3.
+        """
         events = [
             make_event("game_started", 0, {
                 "players": ["Alice"],
@@ -104,12 +111,14 @@ class TestGameReconstructor:
                 },
             }),
             make_event("tick_start", 1, {"tick": 1}),
-            # Weight-2 corridor: cafeteria -> oxygen (weight=2)
+            # Weight-2 corridor: cafeteria -> oxygen (weight=2). The engine
+            # logs ticks_remaining=2 so the reconstructor models 2 transit
+            # ticks before arrival.
             make_event("player_moved", 1, {
                 "player_id": "player_0",
                 "from": "cafeteria",
                 "to": "oxygen",
-                "ticks_remaining": 1,
+                "ticks_remaining": 2,
             }),
             make_event("tick_end", 1, {"tick": 1}),
             make_event("tick_start", 2, {"tick": 2}),
@@ -120,17 +129,24 @@ class TestGameReconstructor:
         ]
         timeline = GameReconstructor(events, simple_map).reconstruct()
 
-        # At tick 1: player starts move, in transit, room = cafeteria (from)
+        # Tick 1: player issues move, in transit, displayed at the `from` room.
         s1 = timeline.get_player_state("player_0", 1)
         assert s1 is not None
         assert s1.in_transit
         assert s1.room == "cafeteria"
 
-        # At tick 2: transit completes (ticks_remaining was 1, decremented at start of tick 2)
+        # Tick 2: still in transit (ticks_remaining 2 -> 1 after start-of-tick
+        # decrement).
         s2 = timeline.get_player_state("player_0", 2)
         assert s2 is not None
-        assert not s2.in_transit
-        assert s2.room == "oxygen"
+        assert s2.in_transit
+        assert s2.room == "cafeteria"
+
+        # Tick 3: transit completes (ticks_remaining 1 -> 0), player is at oxygen.
+        s3 = timeline.get_player_state("player_0", 3)
+        assert s3 is not None
+        assert not s3.in_transit
+        assert s3.room == "oxygen"
 
 
 class TestGameTimeline:

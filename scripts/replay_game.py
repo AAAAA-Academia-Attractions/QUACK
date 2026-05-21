@@ -114,6 +114,14 @@ def apply_event(
         for p in state.alive_players:
             if p.team == Team.DUCK and p.kill_cooldown > 0:
                 p.kill_cooldown -= 1
+        # Mirror GameEngine._advance_transit which runs at the START of every
+        # tick: decrement move_ticks_remaining for every in-transit player and
+        # complete the arrival when it hits zero. Without this, players who
+        # initiated a multi-tick move on an earlier tick would stay frozen at
+        # the origin room for the rest of the replay even though the live
+        # engine had moved them on, making it look like their logged
+        # `player_moved` actions were never applied in the rendered god view.
+        advance_in_transit(state)
 
     elif et == "player_moved":
         pid = data["player_id"]
@@ -123,6 +131,14 @@ def apply_event(
         ticks_remaining = data.get("ticks_remaining", 0)
         if player and player.is_alive:
             if ticks_remaining > 0:
+                # The engine leaves ``current_room`` at the origin while a
+                # player is in multi-tick transit. For replay we explicitly
+                # sync ``current_room`` to ``from_room`` — this matters when
+                # a post-ejection respawn changed the player's room and the
+                # logged ``from`` differs from where the replayer believed
+                # they were before the meeting.
+                player.current_room = from_room
+                player.visited_rooms.add(from_room)
                 player.moving_from = from_room
                 player.moving_to = to_room
                 player.move_ticks_remaining = ticks_remaining
@@ -238,8 +254,21 @@ def apply_event(
             player.is_alive = False
         event_log.append(f"[T{tick}] {data.get('name', pid)} EJECTED ({data.get('role', '')}/{data.get('team', '')})")
 
-        # Post-ejection: clear bodies, respawn is implicit in next events
+        # Post-ejection: clear bodies. The random respawn now arrives as a
+        # dedicated ``players_respawned`` event (handled below).
         state.bodies.clear()
+
+    elif et == "players_respawned":
+        rooms = data.get("rooms", {})
+        for rpid, room in rooms.items():
+            rp = state.players.get(rpid)
+            if rp and rp.is_alive:
+                rp.current_room = room
+                rp.moving_from = ""
+                rp.moving_to = ""
+                rp.move_ticks_remaining = 0
+                rp.visited_rooms.add(room)
+        state.phase = GamePhase.FREE_ROAM
 
     elif et == "vote_skipped":
         state.bodies.clear()
@@ -341,6 +370,20 @@ def replay(
         if img and hasattr(img, "save"):
             img.save(out / f"frame_{frame_counter:04d}.png")
 
+    def render_god(phase_override: str | None = None, tick: int | None = None) -> None:
+        nonlocal frame_counter
+        frame_counter += 1
+        god_img = renderer.render_god_view(
+            state=state,
+            vision_system=vision,
+            event_log=event_log,
+            tick=tick if tick is not None else state.current_tick,
+            frame_idx=frame_counter,
+            phase_override=phase_override,
+        )
+        if god_img:
+            god_img.save(out / f"frame_{frame_counter:04d}.png")
+
     print(f"Replaying {len(events)} events from {log_path}")
     print(f"Players: {list(player_names.values())}")
     print(f"Output: {output_dir}")
@@ -348,6 +391,11 @@ def replay(
 
     last_tick = -1
     discussion_rendered_count = 0
+
+    # Tick-0 spawn frame: snapshot of the initial state before any agent
+    # acts. Without this the video would start at tick 1, after players
+    # have already moved.
+    render_god(phase_override="Spawn", tick=0)
 
     for ev in events:
         et = ev["event_type"]
@@ -357,17 +405,16 @@ def replay(
 
         # Render god view after each tick_end
         if et == "tick_end":
-            god_img = renderer.render_god_view(
-                state=state,
-                vision_system=vision,
-                event_log=event_log,
-                tick=tick,
-            )
-            save_frame(god_img)
+            render_god(tick=tick)
             last_tick = tick
 
-        # Render meeting called frame
+        # Render meeting called frame. In the live engine a god-view frame
+        # is also saved when a free-roam tick is interrupted by a body
+        # report (because run_game.py renders after _run_free_roam_tick
+        # returns regardless of phase change). Mirror that here so the
+        # replay video matches.
         if et in ("body_reported", "meeting_called"):
+            render_god(tick=tick)
             meeting_img = renderer.render_meeting_called(
                 state,
                 state.meeting_reason or "",
@@ -400,6 +447,12 @@ def replay(
                 tick,
             )
             save_frame(vote_img)
+
+        # Random post-meeting respawn: render a dedicated god-view frame
+        # so the viewer can see where each surviving player was teleported
+        # before the next free-roam tick advances them.
+        if et == "players_respawned":
+            render_god(phase_override="Respawn (post-meeting)", tick=tick)
 
     print("-" * 60)
     print(f"Replay complete. Generated {frame_counter} frames in {output_dir}")

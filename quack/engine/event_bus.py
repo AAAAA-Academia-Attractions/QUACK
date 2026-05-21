@@ -24,6 +24,7 @@ class EventType(Enum):
     TASK_PROGRESS = "task_progress"
     TASK_COMPLETED = "task_completed"
     PHASE_CHANGED = "phase_changed"
+    PLAYERS_RESPAWNED = "players_respawned"
     GAME_OVER = "game_over"
 
 
