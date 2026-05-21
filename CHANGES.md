@@ -788,3 +788,70 @@ The fix is purely on the replay side and changes no on-disk log format. All hist
 
 - All three scripts still accept `-n NUM` to override. Anyone who wants the old 50-game runs can pass `-n 50` explicitly; nothing in the runner logic changed except the default.
 - `bash -n` syntax check on all three scripts passes; `python -m pytest -q` still 144 passed (no test changes).
+
+---
+
+## Claude Opus 4.7: Switch to Official Anthropic API
+
+**Date:** 2026-05-20
+
+**Reported issue (user):** Claude Opus 4.7 calls through the greatrouter proxy were heavily rate-limited and very slow — too slow to run a 30-game homogeneous batch. Decision: keep GPT-5.5 and Gemini 3.1 Pro Preview on greatrouter (they work fine there), but route Claude Opus 4.7 directly to `api.anthropic.com` using a dedicated Anthropic key.
+
+### Design
+
+`VLMAgent` is now **provider-aware**. A new `provider` field on each model YAML (default `"openai"`) selects between:
+
+| Provider | SDK | Endpoint | Key source |
+|---|---|---|---|
+| `openai` | `openai` Python SDK (OpenAI-compatible) | `cfg.base_url` (greatrouter by default) | `api_key.txt` / `$QUACK_API_KEY` |
+| `anthropic` | `anthropic` Python SDK | `api.anthropic.com` (SDK default) | `claude_key.txt` / `$ANTHROPIC_API_KEY` |
+
+Everything else in the agent — prompt building, vision images, retry policy, memory — is identical across providers. The provider switch only changes (1) which SDK client is constructed, (2) which API key is supplied, and (3) how the OpenAI-style internal message format is rewritten on the way to the wire.
+
+### Files changed
+
+- `configs/model/claude_opus4.7.yaml` — added `provider: "anthropic"` and `max_tokens: 4096` (Anthropic's Messages API requires `max_tokens` on every call). Header comment now explains why we bypass greatrouter for Opus.
+- `quack/agents/vlm_agent.py`:
+  - Constructor: new `provider: str = "openai"` and `max_tokens: int | None = None` parameters.
+  - `_get_client()`: branches on `self.provider`. Anthropic path builds `anthropic.Anthropic(api_key=..., max_retries=3, timeout=60.0)`. OpenAI path is unchanged.
+  - `_call_vlm_sync()` / `_call_vlm_stream()`: dispatch to the new `_call_anthropic_sync` for `provider="anthropic"`. The streaming branch falls back to non-streaming for Anthropic (no Claude model currently sets `requires_stream=True`).
+  - New `_call_anthropic_sync()`: builds `client.messages.create(model=, max_tokens=, system=, messages=, [temperature=])` kwargs, then concatenates text from the response's content blocks.
+  - New `_to_anthropic_messages()` static helper — the single conversion point from OpenAI-format to Anthropic-format messages. Pulls every `system` role out into a single top-level `system=` string, and rewrites each OpenAI `image_url` part (`data:image/png;base64,...` URL) into Anthropic's typed `image` block (`{type: image, source: {type: base64, media_type, data}}`). Text parts pass through unchanged, and already-typed `image` blocks pass through too. Multiple `system` messages are joined with `\n\n`.
+  - `_is_retryable_error()`: now also recognizes `anthropic.RateLimitError`, `anthropic.APITimeoutError`, `anthropic.APIConnectionError`, and `anthropic.InternalServerError` so the existing capped-exponential-backoff retry loop applies to Claude calls too.
+- `scripts/run_game.py`:
+  - New helper `_resolve_provider_key(model_cfg, openai_key, anthropic_key)` — picks the matching key based on the model's `provider` field, with `openai` as the fallback for legacy configs that don't set it.
+  - `create_agents_from_config()` and `reassign_duck_agents()` now accept an `anthropic_api_key` kwarg and forward `provider` + `max_tokens` from the model YAML to every `VLMAgent` they construct. Heterogeneous mode picks the key per-model (e.g. a GPT-5.5 goose + Claude-Opus duck game uses both keys in the same run).
+  - `run_game()` accepts `anthropic_api_key` and considers the run "VLM-enabled" if *either* key is present.
+  - `main()` loads the Anthropic key from `$ANTHROPIC_API_KEY` first, then `claude_key.txt` at the project root, mirroring the existing `api_key.txt` flow.
+- `pyproject.toml` — added explicit `openai>=1.40` and `anthropic>=0.39` dependencies. (Previously `openai` was a transitive dep of `litellm`; now both providers are first-class.)
+- `.gitignore` — `claude_key.txt` is now ignored alongside `api_key.txt`.
+- `README.md`:
+  - Quickstart now mentions both `api_key.txt` and `claude_key.txt`.
+  - "Supported Models" table gains a **Provider** and **Endpoint** column.
+  - "Adding a New Model" snippet shows the `provider:` and (Anthropic-only) `max_tokens:` fields.
+  - Layout diagram lists `claude_key.txt` next to `api_key.txt`.
+  - Agent-architecture paragraph clarifies that Claude is on the official Anthropic API, not greatrouter.
+
+### Tests
+
+- New `tests/test_agents/test_vlm_anthropic.py` (9 tests) pins:
+  - System-role messages get pulled out into the top-level `system` parameter; multiple system messages join with `\n\n`; list-form system content concatenates text parts.
+  - Plain string user content passes through unchanged.
+  - `data:image/png;base64,<b64>` URLs convert to Anthropic `image` blocks with `source.type=base64`, the matching `media_type`, and the raw base64 payload (stripped of the `data:` prefix).
+  - `image/jpeg` URLs preserve their media type.
+  - Already-typed `image` blocks pass through unchanged.
+  - `_is_retryable_error` returns True for `anthropic.RateLimitError` and `anthropic.InternalServerError` instances.
+- Existing `tests/test_agents/test_vlm_retry.py` keeps passing — the retry predicate stays a superset of the original behavior.
+- Mock-client smoke test confirmed end-to-end that calling `_call_anthropic_sync` with a typical OpenAI-format message list calls `client.messages.create(model="claude-opus-4-7", max_tokens=2048, system="You are Alice.", messages=[{role:"user", content:[{type:"image", source:{type:"base64", media_type:"image/png", data:"XYZ="}}, {type:"text", text:"What do you see?"}]}])`.
+
+### Validation
+
+- `python -m pytest -q` → **153 passed** (was 144; 9 new Anthropic-conversion tests).
+- `ruff check quack/agents/vlm_agent.py scripts/run_game.py tests/test_agents/test_vlm_anthropic.py` → clean.
+- Config-routing check: `_resolve_provider_key` correctly picks `anth-key` for `claude_opus4.7.yaml` and `oai-key` for `gpt5.5.yaml` / `gemini3.1pro.yaml`.
+
+### Backward compatibility
+
+- Model configs without a `provider:` field default to `"openai"`, so any third-party / private model configs that pre-date this change continue to work.
+- `max_tokens` is only forwarded when the model config sets it, so the existing Gemini-streaming requirement ("do NOT set `max_tokens`") is unaffected.
+- No on-disk log format changed; old `game.jsonl` files replay identically.

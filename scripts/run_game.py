@@ -75,18 +75,42 @@ def create_random_agents(num_players: int) -> dict[str, BaseAgent]:
     return agents
 
 
+def _resolve_provider_key(
+    model_cfg: DictConfig,
+    openai_key: str,
+    anthropic_key: str,
+) -> str:
+    """Pick the API key matching the model's provider.
+
+    Falls back to ``openai_key`` for any unknown provider so we don't break
+    third-party model configs that don't set the ``provider`` field.
+    """
+    provider = model_cfg.get("provider", "openai")
+    if provider == "anthropic":
+        return anthropic_key
+    return openai_key
+
+
 def create_agents_from_config(
     cfg: DictConfig,
     api_key: str,
     num_players: int,
+    anthropic_api_key: str = "",
 ) -> dict[str, BaseAgent]:
     """Create VLM agents based on experiment config.
 
     Homogeneous: all agents use ``cfg.model``.
     Heterogeneous: all agents initially created with the goose model;
     duck agents are swapped after role assignment via ``reassign_duck_agents``.
+
+    ``api_key`` is the OpenAI-compatible (greatrouter) key.
+    ``anthropic_api_key`` is the official Anthropic key; used only when a
+    model config declares ``provider: anthropic``.
     """
     from quack.agents.vlm_agent import VLMAgent
+
+    provider = cfg.model.get("provider", "openai")
+    resolved_key = _resolve_provider_key(cfg.model, api_key, anthropic_api_key)
 
     agents: dict[str, BaseAgent] = {}
     for i in range(num_players):
@@ -95,12 +119,14 @@ def create_agents_from_config(
         agents[pid] = VLMAgent(
             player_id=pid,
             name=name,
-            api_key=api_key,
+            api_key=resolved_key,
             base_url=cfg.base_url,
             model=cfg.model.model_id,
             temperature=cfg.model.get("temperature", None),
             speak_chinese=cfg.speak_chinese,
             requires_stream=cfg.model.get("requires_stream", False),
+            provider=provider,
+            max_tokens=cfg.model.get("max_tokens", None),
         )
     return agents
 
@@ -111,6 +137,7 @@ def reassign_duck_agents(
     cfg: DictConfig,
     api_key: str,
     original_cwd: str,
+    anthropic_api_key: str = "",
 ) -> None:
     """After role assignment, replace duck players' agents with the duck model.
 
@@ -125,18 +152,23 @@ def reassign_duck_agents(
 
     from quack.agents.vlm_agent import VLMAgent
 
+    duck_provider = duck_model_cfg.get("provider", "openai")
+    duck_key = _resolve_provider_key(duck_model_cfg, api_key, anthropic_api_key)
+
     for pid, player in engine.state.players.items():
         if player.team.value == "duck":
             old_agent = agents[pid]
             new_agent = VLMAgent(
                 player_id=pid,
                 name=old_agent.name,
-                api_key=api_key,
+                api_key=duck_key,
                 base_url=cfg.base_url,
                 model=duck_model_cfg.model_id,
                 temperature=duck_model_cfg.get("temperature", None),
                 speak_chinese=cfg.speak_chinese,
                 requires_stream=duck_model_cfg.get("requires_stream", False),
+                provider=duck_provider,
+                max_tokens=duck_model_cfg.get("max_tokens", None),
             )
             agents[pid] = new_agent
             engine.agents[pid] = new_agent
@@ -210,7 +242,13 @@ def _build_engine_config(cfg: DictConfig, map_config_path: str) -> dict[str, Any
 # Main game loop
 # ---------------------------------------------------------------------------
 
-async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd: str) -> None:
+async def run_game(
+    cfg: DictConfig,
+    api_key: str,
+    output_dir: Path,
+    original_cwd: str,
+    anthropic_api_key: str = "",
+) -> None:
     if cfg.seed is not None:
         random.seed(cfg.seed)
 
@@ -224,11 +262,15 @@ async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd
     engine.enable_rendering()
 
     num_players = cfg.game.num_players
-    use_vlm = bool(api_key)
+    # A run uses VLM agents if we have *any* applicable key: the OpenAI-style
+    # key covers gpt5.5/gemini3.1pro, the Anthropic key covers claude_opus4.7.
+    use_vlm = bool(api_key) or bool(anthropic_api_key)
 
     if use_vlm:
         print(f"Creating {num_players} VLM agents (model: {cfg.model.display_name})...")
-        agents = create_agents_from_config(cfg, api_key, num_players)
+        agents = create_agents_from_config(
+            cfg, api_key, num_players, anthropic_api_key=anthropic_api_key,
+        )
     else:
         agents = create_random_agents(num_players)
 
@@ -236,7 +278,10 @@ async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd
     await engine.setup_game()
 
     if use_vlm and cfg.experiment.type == "heterogeneous":
-        reassign_duck_agents(engine, agents, cfg, api_key, original_cwd)
+        reassign_duck_agents(
+            engine, agents, cfg, api_key, original_cwd,
+            anthropic_api_key=anthropic_api_key,
+        )
         for pid, player in engine.state.players.items():
             if player.team.value == "duck":
                 role = engine.roles[pid]
@@ -447,7 +492,18 @@ def main(cfg: DictConfig) -> None:
             api_key = key_path.read_text().strip()
             print(f"Loaded API key from {key_path}")
 
-    if api_key:
+    # Separate Anthropic key for Claude Opus 4.7 (provider: anthropic).
+    # Claude on the greatrouter proxy was heavily rate-limited, so we now hit
+    # api.anthropic.com directly using a dedicated key stored in
+    # ``claude_key.txt`` (or in ``$ANTHROPIC_API_KEY``).
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not anthropic_api_key:
+        claude_key_path = Path(original_cwd) / "claude_key.txt"
+        if claude_key_path.exists():
+            anthropic_api_key = claude_key_path.read_text().strip()
+            print(f"Loaded Anthropic API key from {claude_key_path}")
+
+    if api_key or anthropic_api_key:
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -457,7 +513,10 @@ def main(cfg: DictConfig) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {output_dir}")
 
-    asyncio.run(run_game(cfg, api_key, output_dir, original_cwd))
+    asyncio.run(run_game(
+        cfg, api_key, output_dir, original_cwd,
+        anthropic_api_key=anthropic_api_key,
+    ))
 
 
 if __name__ == "__main__":
