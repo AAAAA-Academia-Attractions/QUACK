@@ -2,12 +2,12 @@
 # Run the full QUACK experiment suite: homogeneous + heterogeneous + evaluation.
 #
 # Usage:
-#   ./scripts/batch_full_experiment.sh              # 50 games per condition (default)
+#   ./scripts/batch_full_experiment.sh              # 30 games per condition (default)
 #   ./scripts/batch_full_experiment.sh -n 10         # 10 games per condition (quick test)
 #   ./scripts/batch_full_experiment.sh -n 5 --eval   # 5 games + run evaluation after
 set -euo pipefail
 
-NUM_GAMES=50
+NUM_GAMES=30
 START_SEED=1
 RUN_EVAL=false
 EXTRA_ARGS=""
@@ -28,7 +28,7 @@ Options:
   -h          Show this help
 
 Examples:
-  $(basename "$0")                 # full experiment: 9 × 50 = 450 games
+  $(basename "$0")                 # full experiment: 9 × 30 = 270 games
   $(basename "$0") -n 5            # quick test: 9 × 5 = 45 games
   $(basename "$0") -n 10 --eval    # 90 games + evaluation
 EOF

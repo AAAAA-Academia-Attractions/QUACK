@@ -768,3 +768,23 @@ So at the body-reported frame at T10 the old replay showed Bob at security and E
 ### Backward compatibility
 
 The fix is purely on the replay side and changes no on-disk log format. All historical `game.jsonl` files will now replay with the **correct** post-transit positions; previously they replayed with frozen-at-origin positions for any player who initiated a multi-tick move.
+
+---
+
+## Batch Default: 50 → 30 Games Per Condition
+
+**Date:** 2026-05-20
+
+**Request (user):** lower the default seed count for all batch experiment scripts from 50 to 30 so the full experiment matrix completes in a more reasonable amount of compute (270 instead of 450 games end-to-end).
+
+### Files changed
+
+- `scripts/batch_homogeneous.sh` — `NUM_GAMES=50` → `NUM_GAMES=30`; help-text examples and usage comment updated to reflect "× 30 seeds".
+- `scripts/batch_heterogeneous.sh` — `NUM_GAMES=50` → `NUM_GAMES=30`; usage comment and example updated to "× 30 seeds".
+- `scripts/batch_full_experiment.sh` — `NUM_GAMES=50` → `NUM_GAMES=30`; header comment and the "9 × 50 = 450 games" example updated to "9 × 30 = 270 games".
+- `README.md` — every Quickstart / batch section example that referenced 50 games / `seq 1 50` is now 30 games / `seq 1 30`. The full-experiment line now reads "9 conditions × 30 games = 270 games".
+
+### Behavior
+
+- All three scripts still accept `-n NUM` to override. Anyone who wants the old 50-game runs can pass `-n 50` explicitly; nothing in the runner logic changed except the default.
+- `bash -n` syntax check on all three scripts passes; `python -m pytest -q` still 144 passed (no test changes).

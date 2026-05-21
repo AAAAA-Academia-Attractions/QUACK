@@ -88,7 +88,7 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Homogeneous Batch (`batch_homogeneous.sh`)
 
 ```bash
-# All 3 models × 50 games each (default)
+# All 3 models × 30 games each (default)
 ./scripts/batch_homogeneous.sh
 
 # Single model, 10 games
@@ -104,7 +104,7 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Heterogeneous Batch (`batch_heterogeneous.sh`)
 
 ```bash
-# All cross-model pairs (6 pairs) × 50 games each
+# All cross-model pairs (6 pairs) × 30 games each
 ./scripts/batch_heterogeneous.sh
 
 # Specific goose/duck pair, 10 games
@@ -117,7 +117,7 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Full Experiment Suite (`batch_full_experiment.sh`)
 
 ```bash
-# Full matrix: 3 homogeneous + 6 heterogeneous = 9 conditions × 50 games = 450 games
+# Full matrix: 3 homogeneous + 6 heterogeneous = 9 conditions × 30 games = 270 games
 ./scripts/batch_full_experiment.sh
 
 # Quick test run: 9 conditions × 5 games = 45 games
@@ -130,13 +130,13 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 #### Manual loop (alternative)
 
 ```bash
-# Run 50 games with Gemini 3.1 Pro Preview
-for seed in $(seq 1 50); do
+# Run 30 games with Gemini 3.1 Pro Preview
+for seed in $(seq 1 30); do
     python scripts/run_game.py model=gemini3.1pro seed=$seed
 done
 
-# Run 50 heterogeneous games
-for seed in $(seq 1 50); do
+# Run 30 heterogeneous games
+for seed in $(seq 1 30); do
     python scripts/run_game.py experiment=heterogeneous model=gpt5.5 experiment.duck_model=claude_opus4.7 seed=$seed
 done
 ```

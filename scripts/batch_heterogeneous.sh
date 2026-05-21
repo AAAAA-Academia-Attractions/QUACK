@@ -2,14 +2,14 @@
 # Run N heterogeneous games for specified goose/duck model pairs.
 #
 # Usage:
-#   ./scripts/batch_heterogeneous.sh                                            # all pairs, 50 seeds
+#   ./scripts/batch_heterogeneous.sh                                            # all pairs, 30 seeds
 #   ./scripts/batch_heterogeneous.sh -g gpt5.5 -d claude_opus4.7                # single pair
 #   ./scripts/batch_heterogeneous.sh -g gpt5.5 -d claude_opus4.7 -n 10          # 10 games
 #   ./scripts/batch_heterogeneous.sh -g gpt5.5 -d all -n 5                      # gpt5.5 geese vs every duck
 set -euo pipefail
 
 ALL_MODELS="gpt5.5 claude_opus4.7 gemini3.1pro"
-NUM_GAMES=50
+NUM_GAMES=30
 START_SEED=1
 GOOSE_MODELS=""
 DUCK_MODELS=""
@@ -29,7 +29,7 @@ Options:
 Pairs where goose == duck are skipped (use batch_homogeneous.sh instead).
 
 Examples:
-  $(basename "$0")                                                  # all cross-model pairs × 50 seeds
+  $(basename "$0")                                                  # all cross-model pairs × 30 seeds
   $(basename "$0") -g gpt5.5 -d claude_opus4.7 -n 10                # single pair × 10
   $(basename "$0") -g gpt5.5 -d all -n 5                            # gpt5.5 geese vs all ducks × 5
   $(basename "$0") -g gpt5.5,gemini3.1pro -d claude_opus4.7 -n 5    # 2 goose models vs 1 duck × 5
