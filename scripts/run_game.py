@@ -98,7 +98,7 @@ def create_agents_from_config(
             api_key=api_key,
             base_url=cfg.base_url,
             model=cfg.model.model_id,
-            temperature=cfg.model.temperature,
+            temperature=cfg.model.get("temperature", None),
             speak_chinese=cfg.speak_chinese,
             requires_stream=cfg.model.get("requires_stream", False),
         )
@@ -134,7 +134,7 @@ def reassign_duck_agents(
                 api_key=api_key,
                 base_url=cfg.base_url,
                 model=duck_model_cfg.model_id,
-                temperature=duck_model_cfg.temperature,
+                temperature=duck_model_cfg.get("temperature", None),
                 speak_chinese=cfg.speak_chinese,
                 requires_stream=duck_model_cfg.get("requires_stream", False),
             )

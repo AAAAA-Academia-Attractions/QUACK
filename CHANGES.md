@@ -538,3 +538,58 @@ rg 'gpt5\.2|gpt5\.4|grok4|kimi2\.5|claude_opus4\.6|claude-opus-4-6|grok-4|Kimi-K
    --glob '!CHANGES.md' --glob '!game_logs/**' --glob '!run_game.log'
 # (no matches)
 ```
+
+### Follow-up fix: drop `temperature` / `max_tokens` from API calls
+
+After running `python scripts/run_game.py seed=42` end-to-end against the live greatrouter endpoint, every VLM call returned:
+
+```
+openai.BadRequestError: Unsupported value: 'temperature' does not support 0.7 with this model.
+Only the default (1) value is supported.
+```
+
+`gpt-5.5`, `claude-opus-4-7`, and `gemini-3.1-pro-preview` on greatrouter all reject any custom `temperature`. Gemini additionally returns empty bodies when `max_tokens` is set. Neither of these two parameters appear in the reference snippets the user shared. Both are now omitted unconditionally:
+
+| File | Δ | Purpose |
+|------|---|---------|
+| `quack/agents/vlm_agent.py` | +20 −13 | `temperature: float \| None = None`. New `_build_create_kwargs()` helper assembles the `client.chat.completions.create` payload and only includes `temperature` when explicitly set (non-None). Both the sync and streaming paths now route through this helper. |
+| `quack/evaluation/tier3_statement_verification.py` | +4 −6 | `_extract_claims_sync()` removed `temperature=0.0` and `max_tokens=2000` from both `litellm.completion(...)` branches. |
+| `scripts/run_game.py` | +2 −2 | `temperature=cfg.model.get("temperature", None)` in both `create_agents_from_config` and `reassign_duck_agents` so a missing/null YAML field is forwarded as `None` rather than raising. |
+| `configs/model/gpt5.5.yaml` | +3 −1 | `temperature: null` with an inline comment explaining the constraint. |
+| `configs/model/claude_opus4.7.yaml` | +3 −1 | `temperature: null` with the same comment. |
+| `configs/model/gemini3.1pro.yaml` | +3 −1 | `temperature: null`, plus the existing `max_tokens` warning is preserved as a comment. |
+
+Backward compatibility: callers that explicitly construct `VLMAgent(temperature=0.7)` (e.g. against a self-hosted endpoint that *does* accept custom temperature) still get the parameter forwarded. The new behavior only changes how a `None` (or omitted) value is handled — previously the SDK would receive a default of `0.7`, now the kwarg is dropped entirely.
+
+After the fix, `python scripts/run_game.py seed=42` runs against the live endpoint with no `BadRequestError`. All 125 tests continue to pass.
+
+### Follow-up fix: actually retry on transient upstream errors
+
+Live runs showed two new transient failure modes that the old retry policy did **not** catch (it only matched `"rate" | "429" | "retry"` substrings):
+
+1. `openai.APIStatusError: ... upstreamException - {"code":"quota_exceeded"} ... Model configuration error`  
+   — greatrouter occasionally returns a wrapped quota-exceeded payload from its upstream provider even when the per-user account has quota.
+2. `httpx.ReadTimeout: The read operation timed out`  
+   — the streaming path (Gemini) sometimes stalls mid-response.
+
+In both cases the *next* tick's call succeeded on its own, so they are clearly transient — but the agent had already silently fallen back to `wait()` (action) or `""` (speech / vote) for the failed tick. The log line `attempt 1/3` was misleading because the code never actually retried.
+
+**Fix:**
+
+- `quack/agents/vlm_agent.py`
+  - New module-level `_is_retryable_error(exc)` that returns `True` for typed `openai.RateLimitError` / `APITimeoutError` / `APIConnectionError` / `InternalServerError` and `httpx.TimeoutException` / `NetworkError` / `RemoteProtocolError`, plus a substring fallback covering `quota_exceeded`, `upstreamException`, `5xx`, `timed out`, `connection reset`, etc. Permanent client errors (`BadRequestError`, auth, model-not-found, …) are intentionally not retried.
+  - `_call_vlm()` now calls `_is_retryable_error()` to decide whether to retry. `max_retries` raised from 3 → 4. Backoff is capped exponential (`min(30, 2 ** (attempt+1))`) plus 0–0.75s random jitter to avoid thundering herd across the 6 concurrent agents.
+  - Retryable failures are logged at `WARNING` with `type(e).__name__` and a 240-char message snippet; the full traceback is only emitted with `logger.exception` when retries are truly exhausted or the error is permanent. Terminal output for a normal run with a couple of upstream blips no longer carries 30-line stack traces per attempt.
+- `tests/test_agents/test_vlm_retry.py` (new, 19 tests)
+  - Substring matching for every observed transient pattern (`upstreamException`, `quota_exceeded`, `429`, `503`, `502`, `500`, `timed out`, `Connection reset`, `RemoteProtocolError`, …).
+  - Negative cases for permanent errors (`Unsupported value`, `Invalid request`, `Authentication failed`, `model ... does not exist`, `Permission denied`).
+  - Typed-exception coverage: `openai.RateLimitError`, `openai.InternalServerError`, `httpx.ReadTimeout`, `httpx.RemoteProtocolError` (skipped automatically if the SDK is missing).
+
+After the fix:
+
+```bash
+python -m pytest -q
+# 144 passed (was 125 — 19 new retry-policy tests, 0 regressions)
+```
+
+Behavioral effect on a live run: when greatrouter returns `quota_exceeded` or the stream times out, the agent now sleeps a couple of seconds and retries (up to 4 attempts) instead of immediately defaulting to `wait()` / empty speech. The terminal noise per failure drops from a multi-line traceback to a single `WARNING` line; only a true give-up emits the full traceback.

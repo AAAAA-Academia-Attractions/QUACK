@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from typing import Any
@@ -25,6 +26,68 @@ logging.getLogger("openai._base_client").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+# Substrings that indicate a transient failure worth retrying. Matched against
+# the lowercased exception text so we catch errors that are wrapped by the
+# greatrouter proxy (e.g. "upstreamException - {\"code\":\"quota_exceeded\"}")
+# even when the SDK does not surface a typed exception.
+_RETRYABLE_ERROR_SUBSTRINGS: tuple[str, ...] = (
+    # Rate limiting / throttling
+    "rate", "429", "retry-after", "too many requests",
+    # Upstream proxy hiccups observed on greatrouter
+    "quota_exceeded", "upstreamexception", "upstream exception",
+    "upstream_exception", "upstream error", "upstream timeout",
+    # 5xx server errors
+    "500", "502", "503", "504",
+    "internal server error", "bad gateway", "service unavailable",
+    "gateway timeout",
+    # Network / connection / streaming timeouts
+    "timeout", "timed out", "read error", "connection",
+    "broken pipe", "reset by peer", "remote end closed",
+    "remoteprotocolerror",
+)
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` looks like a transient error worth retrying.
+
+    Uses typed-exception matching where the SDKs are available, and falls
+    back to substring matching on the message so we also catch errors that
+    have been wrapped by the upstream proxy (e.g. ``APIStatusError`` carrying
+    a ``quota_exceeded`` payload).
+    """
+    try:
+        import openai  # type: ignore
+        if isinstance(
+            exc,
+            (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+            ),
+        ):
+            return True
+    except Exception:
+        pass
+
+    try:
+        import httpx  # type: ignore
+        if isinstance(
+            exc,
+            (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+            ),
+        ):
+            return True
+    except Exception:
+        pass
+
+    msg = str(exc).lower()
+    return any(k in msg for k in _RETRYABLE_ERROR_SUBSTRINGS)
+
+
 class VLMAgent(BaseAgent):
     """Agent driven by a Vision-Language Model via OpenAI-compatible API.
 
@@ -43,7 +106,7 @@ class VLMAgent(BaseAgent):
         api_key: str,
         base_url: str = "https://endpoint.greatrouter.com",
         model: str = "gpt-5.5",
-        temperature: float = 0.7,
+        temperature: float | None = None,
         speak_chinese: bool = False,
         requires_stream: bool = False,
     ):
@@ -183,7 +246,13 @@ class VLMAgent(BaseAgent):
         return imgs
 
     async def _call_vlm(self, messages: list[dict[str, Any]]) -> str:
-        """Call the VLM API with global rate limiting and retry."""
+        """Call the VLM API with global rate limiting and retry.
+
+        Retries on transient failures (rate limits, timeouts, upstream
+        ``quota_exceeded`` / ``upstreamException`` hiccups, 5xx, and network
+        errors) with capped exponential backoff and jitter. Permanent client
+        errors (400 ``BadRequestError``, 401, 403, ...) are not retried.
+        """
         now = time.monotonic()
         wait = VLMAgent._min_call_interval - (now - VLMAgent._last_call_time)
         if wait > 0:
@@ -193,7 +262,7 @@ class VLMAgent(BaseAgent):
         client = self._get_client()
         oai_messages = self._convert_messages(messages)
 
-        max_retries = 3
+        max_retries = 4
         for attempt in range(max_retries):
             try:
                 if self.requires_stream:
@@ -201,37 +270,55 @@ class VLMAgent(BaseAgent):
                 else:
                     return await self._call_vlm_sync(client, oai_messages)
             except Exception as e:
-                err_str = str(e).lower()
-                is_rate_limit = "rate" in err_str or "429" in err_str or "retry" in err_str
-                if is_rate_limit and attempt < max_retries - 1:
-                    backoff = 2 ** (attempt + 1)
+                retryable = _is_retryable_error(e)
+                if retryable and attempt < max_retries - 1:
+                    # Capped exponential backoff with jitter so concurrent
+                    # agents don't all retry on the same boundary.
+                    backoff = min(30.0, 2.0 ** (attempt + 1)) + random.uniform(0, 0.75)
                     logger.warning(
-                        "[%s] Rate limited, backing off %ds (attempt %d/%d)",
-                        self.name, backoff, attempt + 1, max_retries,
+                        "[%s] Transient VLM error %s (attempt %d/%d), "
+                        "backing off %.1fs: %s",
+                        self.name, type(e).__name__,
+                        attempt + 1, max_retries, backoff,
+                        str(e)[:240],
                     )
                     await asyncio.sleep(backoff)
                     VLMAgent._last_call_time = time.monotonic()
                     continue
+                # Permanent error, or retries exhausted: log the full
+                # traceback once and give up. Caller falls back to wait()
+                # for actions / empty string for speech & votes.
                 logger.exception(
-                    "[%s] VLM API call failed (attempt %d/%d)",
-                    self.name, attempt + 1, max_retries,
+                    "[%s] VLM API call failed (attempt %d/%d, retryable=%s)",
+                    self.name, attempt + 1, max_retries, retryable,
                 )
                 return ""
         return ""
 
+    def _build_create_kwargs(self, oai_messages: list[dict]) -> dict[str, Any]:
+        """Build kwargs for client.chat.completions.create.
+
+        Omits ``temperature`` when it's None. Frontier models on greatrouter
+        (gpt-5.5, claude-opus-4-7, gemini-3.1-pro-preview) only accept the
+        default temperature, so passing any value raises a 400.
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": oai_messages,
+        }
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
+        return kwargs
+
     async def _call_vlm_sync(self, client: Any, oai_messages: list[dict]) -> str:
         response = client.chat.completions.create(
-            model=self.model,
-            messages=oai_messages,
-            temperature=self.temperature,
+            **self._build_create_kwargs(oai_messages),
         )
         return response.choices[0].message.content or ""
 
     async def _call_vlm_stream(self, client: Any, oai_messages: list[dict]) -> str:
         response = client.chat.completions.create(
-            model=self.model,
-            messages=oai_messages,
-            temperature=self.temperature,
+            **self._build_create_kwargs(oai_messages),
             stream=True,
         )
         result = ""

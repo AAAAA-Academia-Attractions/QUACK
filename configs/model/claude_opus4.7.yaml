@@ -1,5 +1,7 @@
 name: "claude_opus4.7"
 display_name: "Claude Opus 4.7"
 model_id: "claude-opus-4-7"
-temperature: 0.7
+# Frontier greatrouter models only accept the default temperature (1).
+# Leave null to omit the field from API calls.
+temperature: null
 requires_stream: false

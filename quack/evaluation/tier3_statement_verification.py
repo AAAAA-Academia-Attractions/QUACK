@@ -726,6 +726,10 @@ def _extract_claims_sync(
         message=message,
     )
 
+    # Frontier greatrouter models (gpt-5.5, claude-opus-4-7, gemini-3.1-pro-preview)
+    # reject custom `temperature`, and Gemini returns empty bodies when
+    # `max_tokens` is set. Omit both — the defaults are good enough for
+    # claim extraction.
     try:
         if api_key:
             response = litellm.completion(
@@ -733,15 +737,11 @@ def _extract_claims_sync(
                 messages=[{"role": "user", "content": prompt}],
                 api_key=api_key,
                 base_url=base_url if base_url else None,
-                temperature=0.0,
-                max_tokens=2000,
             )
         else:
             response = litellm.completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=2000,
             )
 
         content = response.choices[0].message.content.strip()
