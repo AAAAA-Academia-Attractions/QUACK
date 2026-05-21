@@ -1,5 +1,8 @@
 name: "gemini3.1pro"
 display_name: "Gemini 3.1 Pro"
 model_id: "gemini-3.1-pro-preview"
-temperature: 0.7
+# Frontier greatrouter models only accept the default temperature (1).
+# Leave null to omit the field from API calls.
+# Also: do NOT set max_tokens (causes empty responses on this model).
+temperature: null
 requires_stream: true

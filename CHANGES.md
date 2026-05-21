@@ -538,3 +538,233 @@ rg 'gpt5\.2|gpt5\.4|grok4|kimi2\.5|claude_opus4\.6|claude-opus-4-6|grok-4|Kimi-K
    --glob '!CHANGES.md' --glob '!game_logs/**' --glob '!run_game.log'
 # (no matches)
 ```
+
+### Follow-up fix: drop `temperature` / `max_tokens` from API calls
+
+After running `python scripts/run_game.py seed=42` end-to-end against the live greatrouter endpoint, every VLM call returned:
+
+```
+openai.BadRequestError: Unsupported value: 'temperature' does not support 0.7 with this model.
+Only the default (1) value is supported.
+```
+
+`gpt-5.5`, `claude-opus-4-7`, and `gemini-3.1-pro-preview` on greatrouter all reject any custom `temperature`. Gemini additionally returns empty bodies when `max_tokens` is set. Neither of these two parameters appear in the reference snippets the user shared. Both are now omitted unconditionally:
+
+| File | Δ | Purpose |
+|------|---|---------|
+| `quack/agents/vlm_agent.py` | +20 −13 | `temperature: float \| None = None`. New `_build_create_kwargs()` helper assembles the `client.chat.completions.create` payload and only includes `temperature` when explicitly set (non-None). Both the sync and streaming paths now route through this helper. |
+| `quack/evaluation/tier3_statement_verification.py` | +4 −6 | `_extract_claims_sync()` removed `temperature=0.0` and `max_tokens=2000` from both `litellm.completion(...)` branches. |
+| `scripts/run_game.py` | +2 −2 | `temperature=cfg.model.get("temperature", None)` in both `create_agents_from_config` and `reassign_duck_agents` so a missing/null YAML field is forwarded as `None` rather than raising. |
+| `configs/model/gpt5.5.yaml` | +3 −1 | `temperature: null` with an inline comment explaining the constraint. |
+| `configs/model/claude_opus4.7.yaml` | +3 −1 | `temperature: null` with the same comment. |
+| `configs/model/gemini3.1pro.yaml` | +3 −1 | `temperature: null`, plus the existing `max_tokens` warning is preserved as a comment. |
+
+Backward compatibility: callers that explicitly construct `VLMAgent(temperature=0.7)` (e.g. against a self-hosted endpoint that *does* accept custom temperature) still get the parameter forwarded. The new behavior only changes how a `None` (or omitted) value is handled — previously the SDK would receive a default of `0.7`, now the kwarg is dropped entirely.
+
+After the fix, `python scripts/run_game.py seed=42` runs against the live endpoint with no `BadRequestError`. All 125 tests continue to pass.
+
+### Follow-up fix: actually retry on transient upstream errors
+
+Live runs showed two new transient failure modes that the old retry policy did **not** catch (it only matched `"rate" | "429" | "retry"` substrings):
+
+1. `openai.APIStatusError: ... upstreamException - {"code":"quota_exceeded"} ... Model configuration error`  
+   — greatrouter occasionally returns a wrapped quota-exceeded payload from its upstream provider even when the per-user account has quota.
+2. `httpx.ReadTimeout: The read operation timed out`  
+   — the streaming path (Gemini) sometimes stalls mid-response.
+
+In both cases the *next* tick's call succeeded on its own, so they are clearly transient — but the agent had already silently fallen back to `wait()` (action) or `""` (speech / vote) for the failed tick. The log line `attempt 1/3` was misleading because the code never actually retried.
+
+**Fix:**
+
+- `quack/agents/vlm_agent.py`
+  - New module-level `_is_retryable_error(exc)` that returns `True` for typed `openai.RateLimitError` / `APITimeoutError` / `APIConnectionError` / `InternalServerError` and `httpx.TimeoutException` / `NetworkError` / `RemoteProtocolError`, plus a substring fallback covering `quota_exceeded`, `upstreamException`, `5xx`, `timed out`, `connection reset`, etc. Permanent client errors (`BadRequestError`, auth, model-not-found, …) are intentionally not retried.
+  - `_call_vlm()` now calls `_is_retryable_error()` to decide whether to retry. `max_retries` raised from 3 → 4. Backoff is capped exponential (`min(30, 2 ** (attempt+1))`) plus 0–0.75s random jitter to avoid thundering herd across the 6 concurrent agents.
+  - Retryable failures are logged at `WARNING` with `type(e).__name__` and a 240-char message snippet; the full traceback is only emitted with `logger.exception` when retries are truly exhausted or the error is permanent. Terminal output for a normal run with a couple of upstream blips no longer carries 30-line stack traces per attempt.
+- `tests/test_agents/test_vlm_retry.py` (new, 19 tests)
+  - Substring matching for every observed transient pattern (`upstreamException`, `quota_exceeded`, `429`, `503`, `502`, `500`, `timed out`, `Connection reset`, `RemoteProtocolError`, …).
+  - Negative cases for permanent errors (`Unsupported value`, `Invalid request`, `Authentication failed`, `model ... does not exist`, `Permission denied`).
+  - Typed-exception coverage: `openai.RateLimitError`, `openai.InternalServerError`, `httpx.ReadTimeout`, `httpx.RemoteProtocolError` (skipped automatically if the SDK is missing).
+
+After the fix:
+
+```bash
+python -m pytest -q
+# 144 passed (was 125 — 19 new retry-policy tests, 0 regressions)
+```
+
+Behavioral effect on a live run: when greatrouter returns `quota_exceeded` or the stream times out, the agent now sleeps a couple of seconds and retries (up to 4 attempts) instead of immediately defaulting to `wait()` / empty speech. The terminal noise per failure drops from a multi-line traceback to a single `WARNING` line; only a true give-up emits the full traceback.
+
+### Renderer fix: "teleporting" characters, missing spawn frame, frame-vs-tick mismatch
+
+Watching the god-view video, the user noticed three closely-related visual bugs:
+
+1. **Characters appear to teleport between adjacent frames** (the user's specific example: Frank shows up in `weapons` in one frame and `medbay` in the very next frame, even though those rooms are not adjacent).
+2. **Render "tick" doesn't line up with the engine tick.** During a meeting, ~7 frames in a row all share the same `state.current_tick` in the HUD, then the next free-roam frame jumps the label.
+3. **Tick 0 — the actual spawn state — is never rendered.** The video opens at tick 1, after every agent has already taken its first action, so the viewer never sees the starting positions.
+
+I traced every frame produced by `run_game.py` and `replay_game.py` against `quack/engine/game_engine.py`. The game-logic side is fine; the engine is fully consistent (single-tick moves only go to adjacent rooms; multi-tick moves correctly leave `current_room` at the origin while in transit; `_god_draw_all_players` already draws in-transit players along the corridor). The teleport is *not* a kinematics bug — it is the deliberate **post-ejection respawn** in `_post_ejection`, which randomly re-rooms every alive player after a meeting. Before this fix the respawn was completely invisible to the viewer because:
+
+```
+... last free-roam god-view (players at pre-meeting positions)
+    meeting-called frame (1280×720, no map)
+    speech frames     (1280×720, no map)
+    vote-result frame (1280×720, no map)
+    _post_ejection() runs — silently mutates positions, no event, no frame
+    next free-roam god-view (players already at new random rooms)
+```
+
+So in the video the two adjacent **god-view** frames showed players at completely unrelated rooms, while nothing in the HUD or logs explained it.
+
+**Fix — engine:**
+
+- `quack/engine/event_bus.py`: new `EventType.PLAYERS_RESPAWNED` ("players_respawned").
+- `quack/engine/game_engine.py::_post_ejection` now snapshots the random respawn into a `respawn_map: dict[player_id, room]` and emits `PLAYERS_RESPAWNED` with that map (and tick = the meeting tick). The respawn is now in the JSONL log and downstream tools can reconstruct it exactly. The game still ends the same way when win-conditions trigger (no respawn event in that branch).
+- `quack/engine/game_engine.py::render_god_view` accepts two new optional HUD args, `frame_idx` and `phase_override`, so individual frames can show *which* frame number they are within the same tick and *what they are showing* (e.g. `Spawn`, `Respawn (post-meeting)`) rather than only the engine phase.
+- `quack/rendering/map_renderer.py::render_god_view` consumes those args and now draws the HUD as:
+
+  ```
+  GOD VIEW  |  Frame 0018  |  Tick: 2  |  Phase: Respawn (post-meeting)
+  ```
+
+  Previously it could only show `Tick: N | Phase: <engine phase>`, so the seven-frame meeting at tick 8 all looked indistinguishable.
+
+**Fix — `scripts/run_game.py`:**
+
+- Before the main loop, an explicit **spawn frame** is now rendered from the post-`setup_game` state, labelled `Phase: Spawn`. This is the missing tick-0 frame.
+- In the `"ejection"` branch, after `engine._post_ejection()` finishes and the phase has flipped back to `free_roam`, a dedicated **respawn frame** is rendered with `Phase: Respawn (post-meeting)`. This is the previously-missing visualization of the random repositioning.
+- `_save_god_view_frame` was extended to forward `frame_idx` (now baked into every god-view frame) and `phase_override`.
+
+**Fix — `scripts/replay_game.py`:**
+
+- Renders the same spawn frame from the `game_started` event's `initial_state` before iterating events.
+- Handles the new `players_respawned` event: updates each surviving player's `current_room`, clears transit fields, snaps `state.phase` back to `FREE_ROAM`, and emits a dedicated respawn god-view frame so the replay video matches the live video frame-for-frame.
+- When applying a multi-tick `player_moved` event, `current_room` is now explicitly set to `from_room`. This closes a subtle replay bug: after a respawn the player's actual room had changed in the engine, but the replay's `current_room` was stale (the engine doesn't update `current_room` while in transit). Without the sync, the replay rendered the corridor segment from the *pre-meeting* room to the new destination — visually wrong for the first move after every meeting. Now the corridor always starts at the logged `from`.
+- Renders a god-view frame on `body_reported` / `meeting_called` to mirror the live behaviour where `run_game.py` saves a god-view after `_run_free_roam_tick` even when that tick was interrupted by a report. Without this the replay was missing one god-view per meeting.
+
+**Backward compatibility:**
+
+- Old logs (no `players_respawned` events) still replay; they just don't get the dedicated respawn frame. The `current_room` ← `from_room` sync in the multi-tick branch makes the *first move after a meeting* render correctly in old logs as well, because the logged `from` field of that move is already the post-respawn room.
+- `render_god_view`'s new HUD args are optional; existing callers that don't pass them get the pre-change HUD format unchanged.
+
+**Validation:**
+
+- Smoke run (`seed=1`, random agents, 25 ticks, 2 meetings, both with respawns) produces 54 frames including:
+  - `Frame 0001 | Tick: 0 | Phase: Spawn`
+  - regular tick-end god-views
+  - meeting / speech / vote frames at 1280×720 (unchanged)
+  - `Frame 0018 | Tick: 2 | Phase: Respawn (post-meeting)` and `Frame ... | Tick: 14 | Phase: Respawn (post-meeting)`
+- `python scripts/replay_game.py` on the new log generates 54 frames (exact parity with live); on a pre-fix log it generates 45 frames (no missing-key crash, just no respawn frames).
+- `python -m pytest -q` — 144 passed (no regressions).
+
+**What the user will now see in the video for the original report:** instead of two god-view frames where Frank seems to jump from `weapons` to `medbay`, the sequence is now `... weapons (free roam) → meeting-called → speeches → vote-result → Respawn (post-meeting) → medbay (free roam) ...`, with the respawn frame's HUD explicitly labelled so the random repositioning is visible and self-explanatory.
+
+### Engine fix: weight-W corridor must consume W game ticks (off-by-one in `_do_move`)
+
+While reviewing a fresh `gpt5.5/20260520_203835_seed42` log the user spotted a second, deeper teleport — this one in the engine itself, not the renderer. Frank's log fragment:
+
+```
+tick 5: player_5 moved upper_engine -> oxygen          (instant, weight=1)
+tick 6: player_5 moved oxygen -> cafeteria  ticks_remaining: 1
+tick 7: player_5 moved cafeteria -> electrical  ticks_remaining: 1
+tick 8: player_5 killed player_1 in electrical
+```
+
+`oxygen ↔ cafeteria` is weight 2 in `configs/maps/simple_ship.yaml`, and `cafeteria ↔ electrical` is also weight 2 — so the legal travel time for `oxygen → cafeteria → electrical` is **4 game ticks**, not 2. The engine was letting Frank traverse both corridors in **two ticks** (one action per tick), which then enabled the tick-8 kill in `electrical` that the goose timeline-arithmetic could not explain.
+
+**Root cause** — one-line off-by-one in `quack/engine/game_engine.py::_do_move`:
+
+```python
+player.move_ticks_remaining = weight - 1
+```
+
+The intent of the surrounding pipeline is:
+
+1. `_run_free_roam_tick` increments `current_tick`, then calls `_advance_transit` at the **start** of every tick. `_advance_transit` decrements `move_ticks_remaining` and, when it hits zero, marks the player arrived.
+2. After `_advance_transit`, the player gets an action turn — but only if `is_in_transit` is false.
+
+With `move_ticks_remaining = weight - 1`, a weight-2 corridor was set to `1` on tick N, then immediately decremented to `0` at the start of tick N+1, so the player arrived **and** could act on the same tick N+1. Effective travel time = **1** game tick regardless of corridor weight ≥ 2. Weight-3 corridors took only 2 ticks, weight-4 only 3, etc.
+
+**Fix** — set `move_ticks_remaining = weight` instead:
+
+```python
+# A weight-W corridor must consume W game ticks total: the action tick where
+# _do_move runs (now) plus W-1 subsequent ticks where the player is skipped
+# because is_in_transit is True. _advance_transit decrements
+# move_ticks_remaining at the START of every following tick before the player
+# gets an action turn — so the player is in transit for ticks N+1 .. N+(W-1)
+# and arrives at the start of tick N+W where they can act again.
+player.move_ticks_remaining = weight
+```
+
+The accompanying `# {w} ticks travel time` annotation in `_get_available_actions` is now accurate (previously it claimed weight-2 was "2 ticks travel time" while the engine only spent 1).
+
+**Verified trace** for the user's exact scenario (`oxygen → cafeteria → electrical`, both weight 2), with the fix:
+
+```
+tick 1: TRANSIT oxygen->cafeteria (2t left)     # issued move
+tick 2: TRANSIT oxygen->cafeteria (1t left)     # skipped action
+tick 3: TRANSIT cafeteria->electrical (2t left) # arrived at cafeteria, issued next move
+tick 4: TRANSIT cafeteria->electrical (1t left) # skipped action
+tick 5: AT electrical                           # arrived, can act
+```
+
+Total elapsed = 4 ticks ( = 2 + 2 = sum of weights). Bob's "Frank just came from cafeteria → therefore he was in cafeteria last tick" deductions are now physically possible to reason about.
+
+**Tests updated:**
+
+- `tests/test_systems/test_engine_witness.py::test_engine_emits_multi_tick_arrival_in_completion_tick` — the original test ran `_run_free_roam_tick` twice and asserted "Bob arrived on tick 2", which only held under the buggy off-by-one semantics. Rewrote it as a 3-tick trace: tick 1 starts the move (remaining = 2), tick 2 is in-transit (remaining = 1, no arrival event), tick 3 emits the arrival when `_advance_transit` decrements 1 → 0. Adds explicit `is_in_transit` / `move_ticks_remaining` assertions at every step.
+- `tests/test_evaluation/test_game_reconstructor.py::test_multi_tick_travel` — was using `ticks_remaining=1` for a weight-2 corridor (consistent with the old engine output) and asserting arrival at tick 2. Updated the synthetic event to `ticks_remaining=2` and asserts in-transit at both tick 1 and tick 2, arrival at tick 3 — which matches both the new engine logging and the reconstructor's `tick + ticks_remaining` arrival formula.
+
+**Backward compatibility:** the `GameReconstructor` and `replay_game.apply_event` both trust the logged `ticks_remaining`, so pre-fix logs (with `ticks_remaining = weight - 1`) still replay against the original buggy timing they actually ran with — no rewriting needed. The fix only affects logs produced **after** the change.
+
+**Validation:**
+
+- `python -m pytest -q` → 144 passed, 0 failures.
+- Direct engine reproduction (single-player scripted agent) confirms `oxygen → cafeteria → electrical` now takes 4 ticks end-to-end.
+- Fresh `seed=42 game.max_ticks=10` run shows every multi-tick `player_moved` event in the log now carries `"ticks_remaining": 2` for weight-2 corridors (previously `"ticks_remaining": 1`).
+- Replaying both the user's pre-fix `gpt5.5/20260520_203835_seed42/game.jsonl` and a fresh post-fix log both succeed without crashes (the reconstructor's tick-based `ticks_remaining` decrement gracefully handles both the old `1` and the new `2`).
+
+---
+
+## God-View Replay Fix: in-Transit Players Frozen at Origin
+
+**Date:** 2026-05-20
+
+**Reported issue (user):** "I notice some player actions from the log are not correctly appearing on the rightmost side of the god view." Looking at `game_logs/homogeneous/gpt5.5/20260520_212746_seed42/game.jsonl`, the event log on the right panel correctly listed lines like `[T7] Bob moved security -> electrical` and `[T8] Eve moved weapons -> cafeteria`, but the **player roster** (also on the right panel) and the **map sprites** kept showing those players at their *origin* room (`security`, `weapons`) instead of their *destination* room — making it look like those logged actions had no effect.
+
+### Root cause
+
+The live engine's `_run_free_roam_tick` calls `_advance_transit()` at the **start of every tick**. This decrements `move_ticks_remaining` for every in-transit player and, when it hits zero, completes the arrival by setting `current_room = moving_to` and clearing the transit state.
+
+`scripts/replay_game.py` *defined* an equivalent `advance_in_transit(state)` helper but **never called it**. As a result, every multi-tick `player_moved` event in `apply_event` correctly set `move_ticks_remaining = ticks_remaining` and `current_room = from_room`, but no subsequent tick ever decremented or completed the move. Multi-tick travelers stayed pinned to their `from_room` for the entire rest of the replay.
+
+Concrete diff between live engine and replay for this log at end of tick 9:
+
+| Player | Live engine | Replay (pre-fix) | Replay (post-fix) |
+| --- | --- | --- | --- |
+| Bob (T7 `security → electrical`, w=2) | `electrical` | `security` (frozen, 2t left) | `electrical` |
+| Eve (T8 `weapons → cafeteria`, w=2) | in transit `weapons`, 1t left | `weapons`, 2t left (never decremented) | in transit `weapons`, 1t left |
+| Frank (T9 `cafeteria → weapons`, w=2) | in transit `cafeteria`, 2t left | `cafeteria`, 2t left (correct, just departed) | `cafeteria`, 2t left |
+
+So at the body-reported frame at T10 the old replay showed Bob at security and Eve at weapons; the live god-view had them at electrical and cafeteria respectively. Frank's "just departed" case happened to look right because no tick boundary had elapsed yet between his departure and the render.
+
+### Files changed
+
+- `scripts/replay_game.py` — call `advance_in_transit(state)` inside `apply_event` for the `tick_start` branch, after kill-cooldown decrement and after merging `pending_arrivals` for the current tick. This exactly mirrors `GameEngine._advance_transit()` being invoked at the top of every `_run_free_roam_tick`. Added an explanatory comment so future readers don't drop the call again.
+
+### Why this is the right place
+
+- The engine's order at tick N is: emit `tick_start` → `tick_cooldowns` → `_advance_transit` → player actions. The replay's `apply_event(tick_start)` already handled the first two, so adding `advance_in_transit` at the end of that branch preserves the same order before any of the tick's downstream `player_moved` / `task_progress` / `body_reported` events get applied.
+- `pending_arrivals` is still merged into `state.tick_movements` (so witness-arrow rendering of arrivals is unchanged). The fix only adds the missing `current_room` mutation for arriving players — `pending_arrivals` and `advance_in_transit` are complementary, not redundant.
+- A player who finishes transit at tick N can now act on tick N just like the live engine allows (Bob arrives at electrical at T9 start and immediately progresses his task that same tick — confirmed against the log).
+
+### Verification
+
+- Reconstructed state for `gpt5.5/20260520_212746_seed42/game.jsonl` at end of tick 9 now exactly matches the live engine for every player (Bob at electrical, Eve in transit with 1t left, Diana at medbay, etc.).
+- Re-rendered `renders_new/` + `video_new.mp4` for the same log. The frame-11 (body-reported) god view now draws Bob in `electrical`, Eve in `cafeteria` (just arrived, with the body she reported), Frank in `cafeteria` (transit cancelled by the meeting) — matching the in-game ground truth.
+- The event-log panel content was always correct (all 37 entries appear, no events are filtered out); only the roster and sprite positions were stale, and both are now consistent with the event log.
+- `python -m pytest -q` → 144 passed, 0 failures.
+
+### Backward compatibility
+
+The fix is purely on the replay side and changes no on-disk log format. All historical `game.jsonl` files will now replay with the **correct** post-transit positions; previously they replayed with frozen-at-origin positions for any player who initiated a multi-tick move.

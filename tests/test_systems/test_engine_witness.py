@@ -100,27 +100,49 @@ def test_engine_emits_departed_event_for_instant_move() -> None:
 
 
 def test_engine_emits_multi_tick_arrival_in_completion_tick() -> None:
-    alice = ScriptedAgent("p0", "Alice", actions=["wait()", "wait()"])
-    bob = ScriptedAgent("p1", "Bob", actions=["move(electrical)", "wait()"])
+    # The medbay -> electrical corridor in _build_map has weight=2, so the
+    # move must consume exactly 2 game ticks: tick 1 (the action that issues
+    # the move) and tick 2 (in transit, action skipped). Arrival happens at
+    # the START of tick 3, when _advance_transit decrements move_ticks_remaining
+    # from 1 -> 0.
+    alice = ScriptedAgent(
+        "p0", "Alice", actions=["wait()", "wait()", "wait()"]
+    )
+    bob = ScriptedAgent(
+        "p1", "Bob", actions=["move(electrical)", "wait()", "wait()"]
+    )
     engine = _build_engine(
         {"p0": alice, "p1": bob},
         spawn_rooms={"p0": "electrical", "p1": "medbay"},
     )
 
-    # Tick 1: Bob starts a 2-tick travel medbay -> electrical
+    # Tick 1: Bob issues `move(electrical)`. End of tick: in transit, no arrival.
     asyncio.run(engine._run_free_roam_tick())
     types_t1 = {ev["type"] for ev in engine.state.tick_movements}
     assert "departed" in types_t1
     assert "arrived" not in types_t1
+    assert engine.state.players["p1"].is_in_transit
+    assert engine.state.players["p1"].move_ticks_remaining == 2
 
-    # Tick 2: Bob's transit completes — _advance_transit emits "arrived"
+    # Tick 2: Bob is still in transit — _advance_transit decrements to 1,
+    # which is > 0, so no arrival. Bob skips his action turn.
     asyncio.run(engine._run_free_roam_tick())
-    arrivals = [ev for ev in engine.state.tick_movements if ev["type"] == "arrived"]
-    assert len(arrivals) == 1
-    assert arrivals[0]["player_id"] == "p1"
-    assert arrivals[0]["from_room"] == "medbay"
-    assert arrivals[0]["to_room"] == "electrical"
-    assert arrivals[0]["multi_tick"] is True
+    arrivals_t2 = [ev for ev in engine.state.tick_movements if ev["type"] == "arrived"]
+    assert arrivals_t2 == []
+    assert engine.state.players["p1"].is_in_transit
+    assert engine.state.players["p1"].move_ticks_remaining == 1
+
+    # Tick 3: transit completes — _advance_transit decrements 1 -> 0 and emits
+    # the "arrived" tick_movement.
+    asyncio.run(engine._run_free_roam_tick())
+    arrivals_t3 = [ev for ev in engine.state.tick_movements if ev["type"] == "arrived"]
+    assert len(arrivals_t3) == 1
+    assert arrivals_t3[0]["player_id"] == "p1"
+    assert arrivals_t3[0]["from_room"] == "medbay"
+    assert arrivals_t3[0]["to_room"] == "electrical"
+    assert arrivals_t3[0]["multi_tick"] is True
+    assert engine.state.players["p1"].current_room == "electrical"
+    assert not engine.state.players["p1"].is_in_transit
 
 
 def test_engine_clears_tick_movements_each_tick() -> None:

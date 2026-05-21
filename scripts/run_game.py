@@ -98,7 +98,7 @@ def create_agents_from_config(
             api_key=api_key,
             base_url=cfg.base_url,
             model=cfg.model.model_id,
-            temperature=cfg.model.temperature,
+            temperature=cfg.model.get("temperature", None),
             speak_chinese=cfg.speak_chinese,
             requires_stream=cfg.model.get("requires_stream", False),
         )
@@ -134,7 +134,7 @@ def reassign_duck_agents(
                 api_key=api_key,
                 base_url=cfg.base_url,
                 model=duck_model_cfg.model_id,
-                temperature=duck_model_cfg.temperature,
+                temperature=duck_model_cfg.get("temperature", None),
                 speak_chinese=cfg.speak_chinese,
                 requires_stream=duck_model_cfg.get("requires_stream", False),
             )
@@ -284,6 +284,19 @@ async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd
         god_frame_counter[0] += 1
         return god_frame_counter[0]
 
+    # ---- Frame 1: tick-0 spawn snapshot ----
+    # The engine increments the tick at the START of each free-roam step,
+    # so without this dedicated frame the very first thing in the video
+    # would be tick 1 (after agents have already moved). Render the spawn
+    # state explicitly so the viewer can see where everyone started.
+    if cfg.god_view and engine.renderer:
+        _save_god_view_frame(
+            engine,
+            _next_god_frame(),
+            god_view_dir,
+            phase_override="Spawn",
+        )
+
     while engine.state.phase.value != "game_over":
         prev_phase = engine.state.phase
 
@@ -355,6 +368,19 @@ async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd
 
         elif engine.state.phase.value == "ejection":
             engine._post_ejection()
+            # The engine clears bodies and randomly re-spawns every alive
+            # player. Without a dedicated frame here, the next free-roam
+            # frame would make players look like they "teleport" relative
+            # to the last meeting/vote frame. Render the respawn snapshot
+            # explicitly so the random repositioning is visible.
+            if (cfg.god_view and engine.renderer
+                    and engine.state.phase.value == "free_roam"):
+                _save_god_view_frame(
+                    engine,
+                    _next_god_frame(),
+                    god_view_dir,
+                    phase_override="Respawn (post-meeting)",
+                )
 
         engine._check_win_conditions()
 
@@ -385,9 +411,17 @@ async def run_game(cfg: DictConfig, api_key: str, output_dir: Path, original_cwd
         generate_video(god_view_dir, video_path, fps=cfg.video_fps)
 
 
-def _save_god_view_frame(engine: GameEngine, frame_num: int, renders_dir: Path) -> None:
+def _save_god_view_frame(
+    engine: GameEngine,
+    frame_num: int,
+    renders_dir: Path,
+    phase_override: str | None = None,
+) -> None:
     renders_dir.mkdir(parents=True, exist_ok=True)
-    god_img = engine.render_god_view()
+    god_img = engine.render_god_view(
+        frame_idx=frame_num,
+        phase_override=phase_override,
+    )
     if god_img:
         god_img.save(renders_dir / f"frame_{frame_num:04d}.png")
 

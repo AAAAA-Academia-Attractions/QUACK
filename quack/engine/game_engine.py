@@ -476,7 +476,23 @@ class GameEngine:
             origin_room = player.current_room
             player.moving_from = origin_room
             player.moving_to = target_room
-            player.move_ticks_remaining = weight - 1
+            # A weight-W corridor must consume W game ticks total: the action
+            # tick where _do_move runs (now) plus W-1 subsequent ticks where
+            # the player is skipped because is_in_transit is True. Setting
+            # ``move_ticks_remaining = weight`` is the right value because
+            # _advance_transit decrements it at the START of every following
+            # tick before the player gets an action turn — so the player will
+            # be in transit for ticks N+1 .. N+(W-1), and arrive at the start
+            # of tick N+W where they can act again.
+            #
+            # The previous value (``weight - 1``) made every multi-tick
+            # corridor one tick faster than its declared weight: weight=2
+            # cost only one effective tick because _advance_transit decremented
+            # 1 -> 0 on the very next tick, letting the player act at their
+            # destination immediately. This produced "teleport"-looking moves
+            # in the god view (e.g. oxygen -> cafeteria -> electrical in two
+            # consecutive ticks across two weight-2 corridors).
+            player.move_ticks_remaining = weight
             self.state.tick_movements.append({
                 "type": "departed",
                 "player_id": player.player_id,
@@ -634,10 +650,14 @@ class GameEngine:
             # Clear all bodies from the map
             self.state.bodies.clear()
 
-            # Randomize alive players to different rooms
+            # Randomize alive players to different rooms. We snapshot the
+            # respawn map so the event log (and replay) can rebuild the
+            # post-meeting positions without having to infer them from the
+            # `from` field of the next `player_moved` event.
             alive = self.state.alive_players
             all_rooms = self.game_map.room_names
             new_rooms = self._pick_random_rooms(len(alive), all_rooms)
+            respawn_map: dict[str, str] = {}
             for player, room in zip(alive, new_rooms):
                 player.current_room = room
                 player.moving_from = ""
@@ -647,11 +667,19 @@ class GameEngine:
                 self.vision_system.update_visit(
                     player.player_id, room, self.state.current_tick,
                 )
+                respawn_map[player.player_id] = room
 
             self.state.phase = GamePhase.FREE_ROAM
             self.event_bus.emit(GameEvent(
                 event_type=EventType.PHASE_CHANGED,
                 data={"phase": GamePhase.FREE_ROAM.value},
+                tick=self.state.current_tick,
+            ))
+            # Make the random respawn explicit so the renderer can draw a
+            # dedicated frame for it and replay tools can reconstruct it.
+            self.event_bus.emit(GameEvent(
+                event_type=EventType.PLAYERS_RESPAWNED,
+                data={"rooms": respawn_map},
                 tick=self.state.current_tick,
             ))
 
@@ -717,8 +745,17 @@ class GameEngine:
 
     # ---- God View ----
 
-    def render_god_view(self) -> Any:
-        """Render the god-view image (PIL.Image.Image) if renderer is enabled."""
+    def render_god_view(
+        self,
+        frame_idx: int | None = None,
+        phase_override: str | None = None,
+    ) -> Any:
+        """Render the god-view image (PIL.Image.Image) if renderer is enabled.
+
+        ``frame_idx`` and ``phase_override`` are optional HUD annotations used
+        by the spawn (tick-0) and post-meeting respawn frames so that frames
+        sharing the same engine tick can still be distinguished in the video.
+        """
         if not self.renderer:
             return None
         return self.renderer.render_god_view(
@@ -726,4 +763,6 @@ class GameEngine:
             vision_system=self.vision_system,
             event_log=self._event_log,
             tick=self.state.current_tick,
+            frame_idx=frame_idx,
+            phase_override=phase_override,
         )
