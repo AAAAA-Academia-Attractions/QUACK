@@ -52,13 +52,17 @@ python scripts/run_game.py video=false seed=42
 ### Run a Game (VLM Agents)
 
 ```bash
-# Create api_key.txt with your greatrouter key first
-echo "sk-your-key-here" > api_key.txt
+# Greatrouter key (used by GPT-5.5 and Gemini 3.1 Pro Preview)
+echo "sk-your-greatrouter-key" > api_key.txt
+
+# Official Anthropic key (used by Claude Opus 4.7 — bypasses greatrouter
+# rate limits, hits api.anthropic.com directly)
+echo "sk-ant-your-anthropic-key" > claude_key.txt
 
 # Run with GPT-5.5 (default model)
 python scripts/run_game.py seed=42
 
-# Run with Claude Opus 4.7
+# Run with Claude Opus 4.7  (reads claude_key.txt automatically)
 python scripts/run_game.py model=claude_opus4.7 seed=42
 
 # Run with Gemini 3.1 Pro Preview (uses streaming automatically)
@@ -67,7 +71,8 @@ python scripts/run_game.py model=gemini3.1pro seed=42
 # VLM agents with Simplified Chinese speech (简体中文)
 python scripts/run_game.py speak_chinese=true seed=42
 
-# Custom API endpoint (e.g. domestic China backup node)
+# Custom API endpoint (e.g. domestic China backup node — only affects the
+# greatrouter-backed models; Claude always hits api.anthropic.com)
 python scripts/run_game.py base_url=https://endpoint.wendalog.com
 ```
 
@@ -231,15 +236,15 @@ python scripts/run_game.py video=false god_view=false
 
 ## Supported Models
 
-QUACK currently ships with three frontier VLMs, all accessed through the same OpenAI-compatible greatrouter proxy (`https://endpoint.greatrouter.com` by default; `https://endpoint.wendalog.com` is available as a domestic-China backup node):
+QUACK currently ships with three frontier VLMs. GPT-5.5 and Gemini 3.1 Pro Preview are reached through the OpenAI-compatible greatrouter proxy (`https://endpoint.greatrouter.com` by default; `https://endpoint.wendalog.com` is available as a domestic-China backup node). Claude Opus 4.7 talks to the official Anthropic API directly because the proxy's rate limits were too aggressive for Opus:
 
-| Config Name | Display Name | API Model ID | Streaming | Notes |
-|---|---|---|---|---|
-| `gpt5.5` | GPT-5.5 | `gpt-5.5` | No | Default model |
-| `claude_opus4.7` | Claude Opus 4.7 | `claude-opus-4-7` | No | |
-| `gemini3.1pro` | Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | **Yes** | Requires streaming to avoid timeout; do **not** set `max_tokens` |
+| Config Name | Display Name | API Model ID | Provider | Endpoint | Streaming | Notes |
+|---|---|---|---|---|---|---|
+| `gpt5.5` | GPT-5.5 | `gpt-5.5` | `openai` (greatrouter) | `api_key.txt` / `base_url` | No | Default model |
+| `claude_opus4.7` | Claude Opus 4.7 | `claude-opus-4-7` | `anthropic` (official) | `claude_key.txt` / `api.anthropic.com` | No | Bypasses greatrouter to avoid Opus throttling; requires `max_tokens` |
+| `gemini3.1pro` | Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | `openai` (greatrouter) | `api_key.txt` / `base_url` | **Yes** | Requires streaming to avoid timeout; do **not** set `max_tokens` |
 
-All three models share the same `api_key.txt` and `base_url`. Streaming behavior is controlled per-model via `requires_stream` in the model config and is handled transparently by the agent.
+The `VLMAgent` switches SDKs based on the `provider` field in the model config (`openai` or `anthropic`). Both providers share the same internal message format (OpenAI-style `image_url` + `text` parts) — Anthropic conversion (pulling out `system`, rewriting `image_url` → typed `image` blocks with base64 source) happens transparently in the agent. Streaming behavior is controlled per-model via `requires_stream`.
 
 ### Adding a New Model
 
@@ -249,8 +254,11 @@ Create a YAML file at `configs/model/<name>.yaml`:
 name: "my_model"
 display_name: "My Model"
 model_id: "my-model-api-id"
-temperature: 0.7
+provider: "openai"        # or "anthropic"
+temperature: 0.7          # or null to use the SDK default
 requires_stream: false
+# Anthropic provider only — Anthropic requires max_tokens on every call:
+# max_tokens: 4096
 ```
 
 Then run: `python scripts/run_game.py model=my_model`
@@ -373,7 +381,7 @@ Numbers in parentheses = travel ticks. Each room has themed pixel-art decoration
 
 ## VLM Agent Architecture
 
-Each VLM agent (powered by a configurable model via the OpenAI-compatible greatrouter API) has:
+Each VLM agent (powered by a configurable frontier model — GPT-5.5 / Gemini 3.1 Pro Preview via the OpenAI-compatible greatrouter proxy, or Claude Opus 4.7 via the official Anthropic API) has:
 
 ### Vision Input (2 images per tick)
 
@@ -654,7 +662,8 @@ QUACK/
 ├── tests/
 │   └── test_evaluation/       # Unit tests for the evaluation pipeline
 ├── game_logs/                 # Experiment output (structured by model/condition)
-├── api_key.txt                # API key for VLM endpoint (not committed)
+├── api_key.txt                # Greatrouter API key for GPT-5.5/Gemini (not committed)
+├── claude_key.txt             # Anthropic API key for Claude Opus 4.7 (not committed)
 ├── pyproject.toml
 └── README.md
 ```
