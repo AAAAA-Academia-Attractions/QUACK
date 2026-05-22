@@ -798,6 +798,37 @@ def verify_route_claim(
     )
 
 
+def _find_target_kill(
+    events: list[dict[str, Any]] | None,
+    target_id: str,
+    round_start: int,
+    round_end: int,
+) -> tuple[int, str, str] | None:
+    """Find the first ``player_killed`` event in the window where the
+    given player was the target. Returns ``(kill_tick, killer_id,
+    kill_room)`` or ``None`` if the target was not killed in-window.
+
+    Used by Bug I to filter sighting verdicts: post-death ticks must
+    not count as a "saw X alive" sighting, and the killer's own
+    presence at the kill cannot be passed off as a sighting.
+    """
+    if not events:
+        return None
+    for e in events:
+        if e.get("event_type") != "player_killed":
+            continue
+        if e.get("data", {}).get("target_id") != target_id:
+            continue
+        tick = e.get("tick", -1)
+        if round_start <= tick <= round_end:
+            return (
+                tick,
+                e["data"].get("killer_id") or "",
+                e["data"].get("room") or "",
+            )
+    return None
+
+
 def verify_sighting_claim(
     claim: dict[str, Any],
     timeline: GameTimeline,
@@ -805,11 +836,26 @@ def verify_sighting_claim(
     round_start: int,
     round_end: int,
     game_map: GameMap | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> VerificationResult:
     """Verify a sighting claim using engine visibility rules when available.
 
     Uses can_see() which reimplements VisionSystem.compute_visibility() from
     timeline data. Records visibility_source in evidence for auditability.
+
+    Bug I — death-tick boundary and killer-alibi guards:
+    - Co-location is only counted for ticks at which BOTH subject and
+      target were alive. Post-death ticks (the target's state has
+      ``is_alive=False`` from the kill tick onward) do not count as
+      sightings — a body at the kill site is reported via
+      ``body_reported``, not as a routine sighting of someone "alive
+      there".
+    - When the speaker is the target's killer and the sighting's only
+      remaining matched ticks are at-or-just-before the kill, those
+      ticks are dropped: the killer was at the kill site to commit
+      the kill, not "seeing the victim alive there". This neutralizes
+      killer-alibi sightings that would otherwise verify ``true`` on
+      the genuinely-co-located pre-kill tick.
     """
     verifier_name = "verify_sighting_claim"
     subject = claim.get("subject", "")
@@ -835,6 +881,7 @@ def verify_sighting_claim(
     visibility_source = "engine_visibility" if game_map is not None else "same_room_fallback"
     co_located_ticks: list[int] = []
     wrong_room_ticks: list[int] = []
+    dead_target_ticks: list[int] = []
     subject_rooms: dict[int, str | None] = {}
     target_rooms: dict[int, str | None] = {}
 
@@ -844,12 +891,51 @@ def verify_sighting_claim(
         subject_rooms[t] = s_room
         target_rooms[t] = t_room
 
+        # Bug I-a: only count ticks where BOTH parties are alive.
+        # A "sighting" of a dead body is reported through
+        # ``body_reported`` events, not as a sighting of the player
+        # alive in that room.
+        s_state = timeline.get_player_state(subject_id, t)
+        t_state = timeline.get_player_state(target_id, t)
+        s_alive = bool(s_state and s_state.is_alive)
+        t_alive = bool(t_state and t_state.is_alive)
+        if not (s_alive and t_alive):
+            if (
+                s_alive and not t_alive
+                and s_room == claimed_room and t_room == claimed_room
+            ):
+                # The subject was in the claimed room with the target,
+                # but the target was dead — record so the reviewer
+                # can see the boundary issue without it leaking into
+                # the matched-tick list.
+                dead_target_ticks.append(t)
+            continue
+
         visible = can_see(subject_id, target_id, t, timeline, game_map)
         if visible:
             if s_room == claimed_room and t_room == claimed_room:
                 co_located_ticks.append(t)
             elif s_room is not None and t_room is not None and s_room == t_room:
                 wrong_room_ticks.append(t)
+
+    # Bug I-b: killer-alibi guard. If the speaker is the killer of the
+    # target, drop any matched ticks at-or-just-before the kill: the
+    # killer was at the kill site to *commit* the kill, not to
+    # "see the victim alive there".
+    kill = _find_target_kill(events, target_id, round_start, round_end)
+    speaker_is_killer = bool(kill and kill[1] == subject_id)
+    killer_alibi_dropped: list[int] = []
+    if speaker_is_killer:
+        kill_tick = kill[0]  # type: ignore[index]
+        alibi_window = {kill_tick - 1, kill_tick}
+        new_co = [t for t in co_located_ticks if t not in alibi_window]
+        new_wr = [t for t in wrong_room_ticks if t not in alibi_window]
+        killer_alibi_dropped = sorted(
+            (set(co_located_ticks) | set(wrong_room_ticks))
+            & alibi_window
+        )
+        co_located_ticks = new_co
+        wrong_room_ticks = new_wr
 
     evidence: dict[str, Any] = {
         "num_ticks_checked": len(all_ticks),
@@ -859,7 +945,15 @@ def verify_sighting_claim(
         "target_rooms": target_rooms,
         "co_located_in_claimed_room_ticks": co_located_ticks,
         "co_located_wrong_room_ticks": wrong_room_ticks,
+        "dead_target_ticks_at_claimed_room": dead_target_ticks,
     }
+    if kill is not None:
+        evidence["target_kill_tick"] = kill[0]
+        evidence["target_killer_id"] = kill[1]
+        evidence["target_kill_room"] = kill[2]
+    evidence["speaker_is_killer_of_target"] = speaker_is_killer
+    if killer_alibi_dropped:
+        evidence["killer_alibi_ticks_dropped"] = killer_alibi_dropped
 
     if co_located_ticks:
         return VerificationResult(
@@ -872,6 +966,28 @@ def verify_sighting_claim(
         return VerificationResult(
             verdict="wrong_room",
             reason=f"Subject and target were visible together at ticks {wrong_room_ticks} but in room(s) {rooms}, not {claimed_room}.",
+            evidence=evidence, verifier_name=verifier_name,
+        )
+    elif speaker_is_killer and killer_alibi_dropped:
+        return VerificationResult(
+            verdict="false",
+            reason=(
+                f"Speaker is the killer of the target (kill at tick "
+                f"{kill[0]} in {kill[2]}); their presence at-or-just-before "  # type: ignore[index]
+                f"the kill (ticks {killer_alibi_dropped}) is not a "
+                f"sighting of the victim alive — it is the killing itself."
+            ),
+            evidence=evidence, verifier_name=verifier_name,
+        )
+    elif dead_target_ticks and not co_located_ticks and not wrong_room_ticks:
+        return VerificationResult(
+            verdict="false",
+            reason=(
+                f"Subject was in {claimed_room} at ticks "
+                f"{dead_target_ticks} but the target was already dead "
+                f"by then — a sighting of someone 'alive there' is not "
+                f"supported."
+            ),
             evidence=evidence, verifier_name=verifier_name,
         )
     else:
@@ -954,21 +1070,113 @@ def verify_activity_claim(
 
     # --- traveling / moving ---
     elif activity in ("traveling", "moving"):
+        # Bug H: the old branch checked only "did the subject move at
+        # any tick in the window" and ignored ``claimed_room`` entirely.
+        # That meant any "X was moving toward R at tick T" claim
+        # verified ``true`` as long as X moved *anywhere* in the
+        # window — a structural false-positive that systematically
+        # over-stated truthfulness on traveling claims.
+        #
+        # The fix consults the raw ``player_moved`` events so we can
+        # validate the room the claim names as the source or
+        # destination of an actual move.
         states = timeline.player_timelines.get(subject_id, [])
-        moved_ticks: list[int] = []
+        transit_ticks: list[int] = []
         for t in range(round_start, min(round_end + 1, len(states))):
             if states[t].in_transit or states[t].action.startswith("move("):
-                moved_ticks.append(t)
-        evidence["moved_ticks"] = moved_ticks
-        if moved_ticks:
+                transit_ticks.append(t)
+
+        move_events = [
+            e for e in events
+            if e["event_type"] == "player_moved"
+            and e["data"].get("player_id") == subject_id
+            and round_start <= e.get("tick", 0) <= round_end
+        ]
+
+        evidence["moved_ticks"] = transit_ticks
+        evidence["move_events"] = [
+            {
+                "tick": e.get("tick"),
+                "from": e["data"].get("from"),
+                "to": e["data"].get("to"),
+                "ticks_remaining": e["data"].get("ticks_remaining", 0),
+            }
+            for e in move_events
+        ]
+
+        if not transit_ticks and not move_events:
             return VerificationResult(
-                verdict="true",
-                reason=f"Subject was traveling/moving at ticks {moved_ticks}.",
+                verdict="false",
+                reason=f"Subject did not travel/move during window [{round_start}, {round_end}].",
                 evidence=evidence, verifier_name=verifier_name,
             )
+
+        if claimed_room:
+            # Require at least one move whose source or destination
+            # matches the claimed room. ``room`` in a traveling claim
+            # is what the speaker is pinning the movement to — a bare
+            # "they moved at some tick" is no longer enough.
+            matching = [
+                e for e in move_events
+                if e["data"].get("from") == claimed_room
+                or e["data"].get("to") == claimed_room
+            ]
+            evidence["matching_move_events"] = [
+                {
+                    "tick": e.get("tick"),
+                    "from": e["data"].get("from"),
+                    "to": e["data"].get("to"),
+                }
+                for e in matching
+            ]
+            if matching:
+                ticks = [e.get("tick") for e in matching]
+                return VerificationResult(
+                    verdict="true",
+                    reason=(
+                        f"Subject moved with {claimed_room} as source or "
+                        f"destination at ticks {ticks}."
+                    ),
+                    evidence=evidence, verifier_name=verifier_name,
+                )
+
+            if not move_events:
+                # Transit ticks exist but no raw events tag the
+                # endpoints — can't confirm or refute the claimed room.
+                return VerificationResult(
+                    verdict="unverifiable",
+                    reason=(
+                        f"Subject was in transit during the window but no "
+                        f"raw move event was available to validate "
+                        f"{claimed_room} as source or destination."
+                    ),
+                    evidence=evidence, verifier_name=verifier_name,
+                )
+
+            # Subject did move during the window, but never in/out of
+            # the claimed room — wrong_room (bucketed with ``false``
+            # for truthfulness per Bug F, but distinguishable in the
+            # audit so reviewers can see the speaker named the wrong
+            # endpoint).
+            rooms_touched = sorted(
+                {e["data"].get("from") for e in move_events}
+                | {e["data"].get("to") for e in move_events}
+            )
+            return VerificationResult(
+                verdict="wrong_room",
+                reason=(
+                    f"Subject moved during the window but never "
+                    f"in/out of {claimed_room}; movements touched "
+                    f"{rooms_touched}."
+                ),
+                evidence=evidence, verifier_name=verifier_name,
+            )
+
+        # No room specified — bare "they were moving" claim. Presence
+        # semantics: any movement counts.
         return VerificationResult(
-            verdict="false",
-            reason=f"Subject did not travel/move during window [{round_start}, {round_end}].",
+            verdict="true",
+            reason=f"Subject was traveling/moving at ticks {transit_ticks}.",
             evidence=evidence, verifier_name=verifier_name,
         )
 
@@ -1677,6 +1885,7 @@ class StatementVerificationPipeline:
             result = verify_sighting_claim(
                 claim, self.timeline, self.name_to_id, round_start, round_end,
                 game_map=self.game_map,
+                events=self.events,
             )
             result.resolution_source = resolution_source
             return result

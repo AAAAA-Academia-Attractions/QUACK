@@ -1780,3 +1780,376 @@ class TestBugGMeetingTickWindow:
         result = pipeline._verify_claim(claim, meeting_tick)
         audit = pipeline._build_audit_entry(claim, meeting, 0, result)
         assert audit["temporal_window"]["end_tick"] == meeting_tick
+
+
+class TestBugHTravelingActivityRoomCheck:
+    """Bug H — ``verify_activity_claim`` with activity in
+    ``{traveling, moving}`` used to ignore ``claimed_room`` entirely.
+    Any "X was moving toward R at tick T" claim verified ``true`` as
+    long as X moved *anywhere* in the window, which structurally
+    over-stated truthfulness.
+
+    The fix consults the raw ``player_moved`` events and requires the
+    claimed room to appear as the source or destination of a real
+    move.
+    """
+
+    @staticmethod
+    def _move_event(tick: int, pid: str, frm: str, to: str,
+                    ticks_remaining: int = 0) -> dict[str, Any]:
+        return {
+            "event_type": "player_moved", "tick": tick,
+            "data": {"player_id": pid, "from": frm, "to": to,
+                     "ticks_remaining": ticks_remaining},
+        }
+
+    @staticmethod
+    def _make_minimal_timeline(pid: str, action_by_tick: dict[int, str],
+                                room_by_tick: dict[int, str],
+                                max_tick: int) -> GameTimeline:
+        tl = GameTimeline()
+        tl.max_tick = max_tick
+        tl.player_names = {pid: "Alice"}
+        tl.player_teams = {pid: "goose"}
+        tl.player_timelines = {
+            pid: [
+                PlayerTickState(
+                    tick=t, room=room_by_tick.get(t, "cafeteria"),
+                    action=action_by_tick.get(t, ""),
+                    in_transit=bool(action_by_tick.get(t, "").startswith("move(")),
+                )
+                for t in range(max_tick + 1)
+            ],
+        }
+        return tl
+
+    def test_traveling_wrong_room_when_movement_unrelated(self) -> None:
+        """Alice moved cafeteria→medbay at tick 5, then medbay→storage
+        at tick 9. A claim "Alice was moving toward lower_engine" must
+        NOT verify ``true`` — it should verify ``wrong_room``.
+        """
+        events = [
+            self._move_event(5, "player_0", "cafeteria", "medbay"),
+            self._move_event(9, "player_0", "medbay", "storage"),
+        ]
+        tl = self._make_minimal_timeline(
+            "player_0",
+            action_by_tick={5: "move(medbay)", 9: "move(storage)"},
+            room_by_tick={t: ("medbay" if 5 <= t < 9 else
+                              "storage" if t >= 9 else "cafeteria")
+                          for t in range(12)},
+            max_tick=11,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling", "room": "lower_engine"}
+        result = verify_activity_claim(
+            claim, events, tl, {"Alice": "player_0"}, 0, 11,
+        )
+        assert result.verdict == "wrong_room", (
+            f"Bug H: traveling claim about lower_engine should not "
+            f"verify true when Alice never moved in/out of lower_engine. "
+            f"verdict={result.verdict}, reason={result.reason}"
+        )
+
+    def test_traveling_true_when_room_is_source(self) -> None:
+        """Alice moved medbay→storage. Claim "Alice was moving from
+        medbay" verifies ``true``."""
+        events = [
+            self._move_event(5, "player_0", "medbay", "storage"),
+        ]
+        tl = self._make_minimal_timeline(
+            "player_0", action_by_tick={5: "move(storage)"},
+            room_by_tick={}, max_tick=10,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling", "room": "medbay"}
+        result = verify_activity_claim(
+            claim, events, tl, {"Alice": "player_0"}, 0, 10,
+        )
+        assert result.verdict == "true"
+
+    def test_traveling_true_when_room_is_destination(self) -> None:
+        """Alice moved cafeteria→medbay. Claim "Alice was moving to
+        medbay" verifies ``true``."""
+        events = [
+            self._move_event(5, "player_0", "cafeteria", "medbay"),
+        ]
+        tl = self._make_minimal_timeline(
+            "player_0", action_by_tick={5: "move(medbay)"},
+            room_by_tick={}, max_tick=10,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling", "room": "medbay"}
+        result = verify_activity_claim(
+            claim, events, tl, {"Alice": "player_0"}, 0, 10,
+        )
+        assert result.verdict == "true"
+
+    def test_traveling_false_when_no_movement_at_all(self) -> None:
+        """Alice never moved. Claim "Alice was moving" verifies
+        ``false`` regardless of claimed_room."""
+        tl = self._make_minimal_timeline(
+            "player_0", action_by_tick={}, room_by_tick={}, max_tick=10,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling", "room": "medbay"}
+        result = verify_activity_claim(
+            claim, [], tl, {"Alice": "player_0"}, 0, 10,
+        )
+        assert result.verdict == "false"
+
+    def test_traveling_true_with_no_room_specified(self) -> None:
+        """A bare "they were moving" claim with no ``room`` still
+        verifies ``true`` whenever the subject moved (presence
+        semantics — unchanged for this case)."""
+        events = [
+            self._move_event(5, "player_0", "cafeteria", "medbay"),
+        ]
+        tl = self._make_minimal_timeline(
+            "player_0", action_by_tick={5: "move(medbay)"},
+            room_by_tick={}, max_tick=10,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling"}
+        result = verify_activity_claim(
+            claim, events, tl, {"Alice": "player_0"}, 0, 10,
+        )
+        assert result.verdict == "true"
+
+    def test_evidence_includes_raw_move_events(self) -> None:
+        """The audit should surface the raw move events the verifier
+        consulted (so reviewers can trace any wrong_room verdict to
+        the actual ground-truth moves)."""
+        events = [
+            self._move_event(5, "player_0", "cafeteria", "medbay"),
+            self._move_event(9, "player_0", "medbay", "storage"),
+        ]
+        tl = self._make_minimal_timeline(
+            "player_0",
+            action_by_tick={5: "move(medbay)", 9: "move(storage)"},
+            room_by_tick={}, max_tick=10,
+        )
+        claim = {"type": "activity", "subject": "Alice",
+                 "activity": "traveling", "room": "lower_engine"}
+        result = verify_activity_claim(
+            claim, events, tl, {"Alice": "player_0"}, 0, 10,
+        )
+        ev = result.evidence or {}
+        assert "move_events" in ev
+        assert len(ev["move_events"]) == 2
+        assert ev["move_events"][0]["from"] == "cafeteria"
+        assert ev["move_events"][0]["to"] == "medbay"
+        assert "matching_move_events" in ev
+        assert ev["matching_move_events"] == []  # no move involved lower_engine
+
+
+class TestBugISightingDeathBoundary:
+    """Bug I — sighting claims must not verify ``true`` on
+    post-death ticks (Bug I-a) and must not absolve the killer's own
+    presence at the kill site (Bug I-b)."""
+
+    @staticmethod
+    def _build_kill_scenario() -> tuple[list[dict[str, Any]], GameTimeline,
+                                         dict[str, str]]:
+        """Bob (killer) and Eve (victim) only co-locate in security:
+        - Eve in cafeteria for ticks 0-9, then security from tick 10.
+        - Bob in oxygen for ticks 0-10, then security from tick 11.
+        - tick 12: Bob kills Eve in security.
+        Other players sit in cafeteria/storage so they don't
+        accidentally co-locate with Eve.
+        """
+        events = [
+            {"event_type": "player_moved", "tick": 10,
+             "data": {"player_id": "player_4", "from": "cafeteria",
+                      "to": "security", "ticks_remaining": 0}},
+            {"event_type": "player_moved", "tick": 11,
+             "data": {"player_id": "player_1", "from": "oxygen",
+                      "to": "security", "ticks_remaining": 0}},
+            {"event_type": "player_killed", "tick": 12,
+             "data": {"killer_id": "player_1", "target_id": "player_4",
+                      "room": "security"}},
+        ]
+        # Hand-built timeline matching the events. Eve and Bob are
+        # deliberately kept in disjoint rooms pre-kill so they ONLY
+        # co-locate in security.
+        def state(pid: str, t: int) -> PlayerTickState:
+            if pid == "player_4":  # Eve
+                room = "cafeteria" if t < 10 else "security"
+                alive = t < 12
+                return PlayerTickState(
+                    tick=t, room=room, is_alive=alive,
+                    rooms_touched=(room,) if alive else (),
+                )
+            if pid == "player_1":  # Bob (killer)
+                room = "oxygen" if t < 11 else "security"
+                return PlayerTickState(
+                    tick=t, room=room, is_alive=True,
+                    rooms_touched=(room,),
+                )
+            return PlayerTickState(
+                tick=t, room="storage", is_alive=True,
+                rooms_touched=("storage",),
+            )
+
+        tl = GameTimeline()
+        tl.max_tick = 21
+        tl.player_names = {
+            "player_0": "Alice", "player_1": "Bob", "player_2": "Charlie",
+            "player_3": "Diana", "player_4": "Eve", "player_5": "Frank",
+        }
+        tl.player_teams = {
+            "player_0": "goose", "player_1": "duck", "player_2": "goose",
+            "player_3": "goose", "player_4": "goose", "player_5": "goose",
+        }
+        tl.free_roam_segments = [{"start": 0, "end": 21}]
+        tl.player_timelines = {
+            pid: [state(pid, t) for t in range(22)]
+            for pid in tl.player_names
+        }
+        n2i = {v: k for k, v in tl.player_names.items()}
+        return events, tl, n2i
+
+    def test_sighting_at_kill_tick_not_counted(self) -> None:
+        """Diana claims "I saw Eve in security" at tick 12 — Eve is
+        dead by tick 12. Diana is not co-located, but the dead-target
+        filter should ensure that even if she were, tick 12 wouldn't
+        count. Concretely: a Bob sighting of Eve must NOT match
+        tick 12 (Eve dead) — only the pre-kill tick 11 is potentially
+        valid."""
+        events, tl, n2i = self._build_kill_scenario()
+        # Bob sees Eve at security. Without Bug I, ticks [11, 12] match.
+        claim = {"type": "sighting", "subject": "Bob",
+                 "target": "Eve", "room": "security"}
+        result = verify_sighting_claim(
+            claim, tl, n2i, 0, 21, events=events,
+        )
+        ev = result.evidence or {}
+        # Tick 12 (target dead) must not be in co_located_in_claimed_room_ticks.
+        assert 12 not in ev.get("co_located_in_claimed_room_ticks", []), (
+            "Bug I-a: tick 12 should be filtered (target dead)"
+        )
+
+    def test_killer_alibi_sighting_at_kill_room_is_false(self) -> None:
+        """The core Bug I-b fix: Bob (killer) claiming to have seen
+        Eve alive in security at the kill site must NOT verify
+        ``true``. Tick 11 is the killer's setup tick (=
+        kill_tick - 1); tick 12 is the kill itself. Both fall in the
+        killer-alibi window and are dropped, so the verdict is
+        ``false`` with a killer-alibi reason."""
+        events, tl, n2i = self._build_kill_scenario()
+        claim = {"type": "sighting", "subject": "Bob",
+                 "target": "Eve", "room": "security"}
+        result = verify_sighting_claim(
+            claim, tl, n2i, 0, 21, events=events,
+        )
+        assert result.verdict == "false", (
+            f"Killer Bob's security sighting of victim Eve should be "
+            f"false; got {result.verdict} ({result.reason})"
+        )
+        ev = result.evidence or {}
+        assert ev.get("speaker_is_killer_of_target") is True
+        assert 11 in ev.get("killer_alibi_ticks_dropped", [])
+        assert ev.get("target_kill_tick") == 12
+
+    def test_killer_sighting_far_before_kill_still_true(self) -> None:
+        """Guardrail: if the killer co-located with the victim much
+        earlier in the round (away from the kill site/time), that's a
+        legitimate sighting. Only the kill-tick-adjacent window is
+        flagged.
+
+        Here Bob and Eve are both in weapons at ticks 7-9 (well
+        before tick 12). A "Bob saw Eve in weapons" claim should
+        still verify ``true``.
+        """
+        events = [
+            {"event_type": "player_moved", "tick": 7,
+             "data": {"player_id": "player_4", "from": "cafeteria",
+                      "to": "weapons", "ticks_remaining": 0}},
+            {"event_type": "player_moved", "tick": 7,
+             "data": {"player_id": "player_1", "from": "cafeteria",
+                      "to": "weapons", "ticks_remaining": 0}},
+            {"event_type": "player_moved", "tick": 10,
+             "data": {"player_id": "player_4", "from": "weapons",
+                      "to": "security", "ticks_remaining": 0}},
+            {"event_type": "player_moved", "tick": 11,
+             "data": {"player_id": "player_1", "from": "weapons",
+                      "to": "security", "ticks_remaining": 0}},
+            {"event_type": "player_killed", "tick": 12,
+             "data": {"killer_id": "player_1", "target_id": "player_4",
+                      "room": "security"}},
+        ]
+
+        def state(pid: str, t: int) -> PlayerTickState:
+            if pid == "player_4":
+                room = ("cafeteria" if t < 7 else "weapons" if t < 10
+                        else "security")
+                alive = t < 12
+                return PlayerTickState(
+                    tick=t, room=room, is_alive=alive,
+                    rooms_touched=(room,) if alive else (),
+                )
+            if pid == "player_1":
+                room = ("cafeteria" if t < 7 else "weapons" if t < 11
+                        else "security")
+                return PlayerTickState(
+                    tick=t, room=room, is_alive=True,
+                    rooms_touched=(room,),
+                )
+            return PlayerTickState(
+                tick=t, room="cafeteria", is_alive=True,
+                rooms_touched=("cafeteria",),
+            )
+
+        tl = GameTimeline()
+        tl.max_tick = 21
+        tl.player_names = {"player_1": "Bob", "player_4": "Eve"}
+        tl.player_teams = {"player_1": "duck", "player_4": "goose"}
+        tl.free_roam_segments = [{"start": 0, "end": 21}]
+        tl.player_timelines = {
+            pid: [state(pid, t) for t in range(22)]
+            for pid in tl.player_names
+        }
+        n2i = {"Bob": "player_1", "Eve": "player_4"}
+
+        claim = {"type": "sighting", "subject": "Bob",
+                 "target": "Eve", "room": "weapons"}
+        result = verify_sighting_claim(
+            claim, tl, n2i, 0, 21, events=events,
+        )
+        assert result.verdict == "true", (
+            "Pre-kill sighting in a different room should still verify "
+            f"true; got {result.verdict} ({result.reason})"
+        )
+        ev = result.evidence or {}
+        # Speaker is still flagged as killer (so the reviewer sees the
+        # context) but matched ticks survived the alibi filter.
+        assert ev.get("speaker_is_killer_of_target") is True
+
+    def test_innocent_sighting_at_kill_tick_filters_dead_target(self) -> None:
+        """An innocent witness Diana claiming to have seen Eve in
+        security at tick 12 (post-kill) should NOT verify true — Eve
+        is dead. Diana isn't the killer, so the killer-alibi guard
+        doesn't fire; the dead-target filter handles it on its own."""
+        events, tl, n2i = self._build_kill_scenario()
+        # Put Diana in security at tick 12 (after Bob already killed
+        # Eve there).
+        diana_states = list(tl.player_timelines["player_3"])
+        for t in range(12, 15):
+            diana_states[t] = PlayerTickState(
+                tick=t, room="security", is_alive=True,
+                rooms_touched=("security",),
+            )
+        tl.player_timelines["player_3"] = diana_states
+
+        claim = {"type": "sighting", "subject": "Diana",
+                 "target": "Eve", "room": "security"}
+        result = verify_sighting_claim(
+            claim, tl, n2i, 0, 21, events=events,
+        )
+        assert result.verdict == "false", (
+            "A post-kill sighting of a now-dead victim must not verify "
+            f"true; got {result.verdict} ({result.reason})"
+        )
+        ev = result.evidence or {}
+        assert ev.get("speaker_is_killer_of_target") is False
+        assert 12 in ev.get("dead_target_ticks_at_claimed_room", [])
