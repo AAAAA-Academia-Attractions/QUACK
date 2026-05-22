@@ -174,25 +174,56 @@ python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed4
 
 ### Evaluate Games
 
+QUACK ships **three** evaluation entry points: one for a single game, one for a single directory (recursive), and a per-condition wrapper that walks all 9 experimental conditions (3 homogeneous + 6 heterogeneous) and isolates failures so one bad condition does not abort the others.
+
+#### Single game
+
 ```bash
-# Evaluate a single game (Tier 1 + Tier 2; auto-saves evaluation.json alongside game.jsonl)
+# Tier 1 + Tier 2 only (no API key needed) — auto-saves evaluation.json next to game.jsonl
 python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl
 
-# Include Tier 3 statement verification (requires LLM API key)
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --tier3 --api-key YOUR_KEY
-
-# Evaluate all GPT-5.5 homogeneous games
-python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/
-
-# Evaluate all homogeneous models at once
-python scripts/evaluate_batch.py game_logs/homogeneous/
-
-# Evaluate a specific heterogeneous condition
-python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/
-
-# Evaluate everything
-python scripts/evaluate_batch.py game_logs/ --tier3 --api-key YOUR_KEY
+# Full pipeline with Tier 3 statement verification (uses api_key.txt if --api-key is omitted)
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --tier3
 ```
+
+#### Single directory (recursive)
+
+```bash
+# All GPT-5.5 homogeneous games (per-condition aggregation works at any search-root depth)
+python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/ --tier3
+
+# A specific heterogeneous condition
+python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/ --tier3
+
+# Everything in one pass (writes <root>/evaluation/{homogeneous_<m>.json, heterogeneous_<c>.json, summary.json})
+python scripts/evaluate_batch.py game_logs/ --tier3
+```
+
+#### All 9 conditions, isolated (recommended for full sweeps)
+
+`batch_evaluate.sh` invokes `evaluate_batch.py` **once per condition** so a Tier-3 hiccup in one condition does not block the rest. Each condition gets its own aggregated output under `game_logs/<category>/<condition>/evaluation/`, and the script prints a pass/fail summary at the end.
+
+```bash
+# Tier 1 + Tier 2 across all 9 conditions (no API key)
+./scripts/batch_evaluate.sh
+
+# Full pipeline including Tier 3 (uses api_key.txt)
+./scripts/batch_evaluate.sh --tier3
+
+# Only the 3 homogeneous conditions
+./scripts/batch_evaluate.sh -c homogeneous --tier3
+
+# Only the 6 heterogeneous conditions, with an explicit extraction model
+./scripts/batch_evaluate.sh -c heterogeneous --tier3 --model gpt-5.5
+
+# Custom log root (e.g. an archived run)
+./scripts/batch_evaluate.sh -d game_logs_archive --tier3
+```
+
+The full sweep produces, per game:
+- `evaluation.json` — the three-tier metrics summary
+- `tier3_claims.jsonl` — one record per extracted Tier 3 claim with the full `ground_truth_events` slice and final verdict (use this to audit any specific verdict)
+- `tier3_extraction_cache.jsonl` — on-disk cache of LLM extraction outputs (re-runs are deterministic; only the verifier re-runs)
 
 ---
 
@@ -554,16 +585,24 @@ The most novel component. For each meeting discussion message:
 
 ### Batch Evaluation
 
-The batch evaluator recursively discovers game logs, groups results by experiment condition, and computes per-condition and overall aggregated metrics (mean +/- std):
+The batch evaluator recursively discovers game logs, groups results by experiment condition, and computes per-condition and overall aggregated metrics (mean ± std). Two entry points:
 
 ```bash
-python scripts/evaluate_batch.py game_logs/ --output batch_results.json
+# One sweep over the entire log tree (writes per-condition + overall summary)
+python scripts/evaluate_batch.py game_logs/ --tier3
+
+# Isolated per-condition sweep over all 9 conditions (recommended for full runs;
+# a failure in one condition does not abort the rest)
+./scripts/batch_evaluate.sh --tier3
 ```
 
 Results are saved as:
-- **Per-game**: `evaluation.json` alongside each `game.jsonl`
-- **Per-condition**: `game_logs/evaluation/{condition}.json`
-- **Overall**: `game_logs/evaluation/summary.json`
+- **Per-game**: `evaluation.json` (three-tier summary) + `tier3_claims.jsonl` (per-claim audit with ground-truth events) alongside each `game.jsonl`
+- **Per-condition** (one-shot mode): `game_logs/evaluation/{homogeneous_<model>.json, heterogeneous_<condition>.json}`
+- **Per-condition** (isolated mode): `game_logs/<category>/<condition>/evaluation/{condition}.json` and `.../evaluation/summary.json`
+- **Overall** (one-shot mode): `game_logs/evaluation/summary.json`
+
+The condition name is anchored on the `homogeneous/<model>` or `heterogeneous/<condition>` segment of the log path, so per-condition aggregation works regardless of how you scope the search root (the whole `game_logs/` tree, a single category, or a single model).
 
 ### Programmatic Usage
 
@@ -655,6 +694,7 @@ QUACK/
 │   ├── replay_game.py         # Replay game logs and generate renders/video
 │   ├── evaluate_game.py       # Evaluate a single game log (all tiers)
 │   ├── evaluate_batch.py      # Recursive batch evaluate with per-condition aggregation
+│   ├── batch_evaluate.sh      # Per-condition evaluation wrapper (9 isolated runs)
 │   ├── batch_homogeneous.sh   # Batch runner for homogeneous experiments
 │   ├── batch_heterogeneous.sh # Batch runner for cross-model experiments
 │   ├── batch_full_experiment.sh # One-command full experiment suite
