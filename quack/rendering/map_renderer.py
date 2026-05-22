@@ -7,7 +7,7 @@ Produces two views per agent per tick:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +33,14 @@ from quack.rendering.sprites import SpriteSheet
 if TYPE_CHECKING:
     from quack.engine.game_state import GameState, Player
     from quack.map.game_map import GameMap, Room
+
+
+class _VisualTransit(NamedTuple):
+    """Renderer-only end-of-tick placement (does not mutate engine state)."""
+
+    on_corridor: bool
+    corridor_progress: float
+    display_room: str
 
 
 _CHINESE_FONT_PATHS = [
@@ -101,6 +109,74 @@ class MapRenderer:
 
     def _get_player_name(self, player_id: str) -> str:
         return self._player_names.get(player_id, player_id)
+
+    def _visual_transit(self, player: Player) -> _VisualTransit | None:
+        """Map in-transit engine state to end-of-tick god-view placement.
+
+        God-view frames are captured after each tick completes.  Without changing
+        game logic, treat each such frame as one step along a weight-W corridor:
+
+            steps_done = weight - move_ticks_remaining + 1
+
+        When ``steps_done >= weight`` the player is drawn in ``moving_to``.
+        """
+        if not player.is_in_transit or not player.moving_to:
+            return None
+        if (
+            player.current_room not in self.game_map.rooms
+            or player.moving_to not in self.game_map.rooms
+        ):
+            return None
+        weight = self.game_map.get_corridor_weight(
+            player.current_room, player.moving_to,
+        )
+        total = max(1, weight)
+        steps_done = min(total, total - player.move_ticks_remaining + 1)
+        if steps_done >= total:
+            return _VisualTransit(
+                on_corridor=False,
+                corridor_progress=1.0,
+                display_room=player.moving_to,
+            )
+        progress = steps_done / total
+        progress = max(0.25, min(0.75, progress))
+        return _VisualTransit(
+            on_corridor=True,
+            corridor_progress=progress,
+            display_room=player.current_room,
+        )
+
+    def _player_display_room(self, player: Player) -> str:
+        """Human-readable room label for panels / POV captions."""
+        if not player.is_alive:
+            return player.current_room
+        vt = self._visual_transit(player)
+        if vt is None:
+            return player.current_room
+        if vt.on_corridor:
+            return f"{player.current_room} → {player.moving_to}"
+        return vt.display_room
+
+    def _transit_corridor_xy(
+        self, player: Player, scale: float, offset_y: int = 0,
+    ) -> tuple[int, int] | None:
+        """Pixel position when the player is visually on a corridor segment."""
+        vt = self._visual_transit(player)
+        if vt is None or not vt.on_corridor:
+            return None
+        room_a = self.game_map.rooms.get(player.current_room)
+        room_b = self.game_map.rooms.get(player.moving_to)
+        if not room_a or not room_b:
+            return None
+        ca = self._room_center(room_a, scale)
+        cb = self._room_center(room_b, scale)
+        ca = (ca[0], ca[1] + offset_y)
+        cb = (cb[0], cb[1] + offset_y)
+        p = vt.corridor_progress
+        return (
+            int(ca[0] + (cb[0] - ca[0]) * p),
+            int(ca[1] + (cb[1] - ca[1]) * p),
+        )
 
     def _get_sprite_variant(self, player_id: str, is_alive: bool = True) -> str:
         if not is_alive:
@@ -387,25 +463,12 @@ class MapRenderer:
         """Draw players currently traveling between rooms on the corridor."""
         for pid in visible_ids:
             p = state.players.get(pid)
-            if not p or not p.is_alive or not p.is_in_transit or pid == viewer_id:
+            if not p or not p.is_alive or pid == viewer_id:
                 continue
-            room_a = self.game_map.rooms.get(p.current_room)
-            room_b = self.game_map.rooms.get(p.moving_to)
-            if not room_a or not room_b:
+            pos = self._transit_corridor_xy(p, scale, offset_y)
+            if pos is None:
                 continue
-            ca = self._room_center(room_a, scale)
-            cb = self._room_center(room_b, scale)
-            ca = (ca[0], ca[1] + offset_y)
-            cb = (cb[0], cb[1] + offset_y)
-
-            weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
-            total = max(1, weight)
-            traveled = weight - p.move_ticks_remaining
-            progress = traveled / total if total > 0 else 0.5
-            progress = max(0.2, min(0.8, progress))
-
-            px = int(ca[0] + (cb[0] - ca[0]) * progress)
-            py = int(ca[1] + (cb[1] - ca[1]) * progress)
+            px, py = pos
             name = self._get_player_name(pid)
             self._paste_sprite(img, pid, px, py, scale=2, variant="walk")
             draw.text((px, py - 26), name[:8], fill=TEXT_WHITE,
@@ -420,27 +483,28 @@ class MapRenderer:
         viewer_player = state.players.get(viewer_id) if state else None
 
         if viewer_player and viewer_player.is_in_transit:
-            room_a = self.game_map.rooms.get(viewer_player.current_room)
-            room_b = self.game_map.rooms.get(viewer_player.moving_to)
-            if room_a and room_b:
-                ca = self._room_center(room_a, scale)
-                cb = self._room_center(room_b, scale)
-                ca = (ca[0], ca[1] + offset_y)
-                cb = (cb[0], cb[1] + offset_y)
-                weight = self.game_map.get_corridor_weight(
-                    viewer_player.current_room, viewer_player.moving_to,
-                )
-                total = max(1, weight - 1)
-                progress = max(0.1, min(0.9, 1.0 - viewer_player.move_ticks_remaining / total))
-                cx = int(ca[0] + (cb[0] - ca[0]) * progress)
-                cy = int(ca[1] + (cb[1] - ca[1]) * progress)
-
+            pos = self._transit_corridor_xy(viewer_player, scale, offset_y)
+            if pos is not None:
+                cx, cy = pos
                 r = 22
                 draw.ellipse((cx - r, cy - r, cx + r, cy + r),
                              outline=(255, 255, 255), width=2)
                 self._paste_sprite(img, viewer_id, cx, cy, scale=2, variant="walk")
                 draw.text((cx, cy - 28), "YOU", fill=TEXT_WHITE, font=self._font_md, anchor="mb")
                 return
+            vt = self._visual_transit(viewer_player)
+            if vt is not None and not vt.on_corridor:
+                viewer_room = vt.display_room
+                room = self.game_map.rooms.get(viewer_room)
+                if room:
+                    cx, cy = self._room_center(room, scale)
+                    cy += offset_y + 16
+                    r = 22
+                    draw.ellipse((cx - r, cy - r, cx + r, cy + r),
+                                 outline=(255, 255, 255), width=2)
+                    self._paste_sprite(img, viewer_id, cx, cy, scale=2, variant="walk")
+                    draw.text((cx, cy - 28), "YOU", fill=TEXT_WHITE, font=self._font_md, anchor="mb")
+                    return
 
         room = self.game_map.rooms.get(viewer_room)
         if not room:
@@ -529,20 +593,16 @@ class MapRenderer:
         self._draw_viewer_local(img, draw, scale, player)
 
         # Compute camera center: in a room it is the room center; in transit,
-        # it is a point along the corridor between current_room and moving_to.
-        if player.is_in_transit and player.moving_to:
-            room_a = self.game_map.rooms.get(player.current_room)
-            room_b = self.game_map.rooms.get(player.moving_to)
-            if room_a and room_b:
-                ca = self._room_center(room_a, scale)
-                cb = self._room_center(room_b, scale)
-                weight = self.game_map.get_corridor_weight(player.current_room, player.moving_to)
-                total = max(1, weight)
-                traveled = weight - player.move_ticks_remaining
-                progress = traveled / total if total > 0 else 0.5
-                progress = max(0.2, min(0.8, progress))
-                view_cx = int(ca[0] + (cb[0] - ca[0]) * progress)
-                view_cy = int(ca[1] + (cb[1] - ca[1]) * progress)
+        # it is a point along the corridor between current_room and moving_to,
+        # or the destination room when the end-of-tick visual step has arrived.
+        vt = self._visual_transit(player)
+        if vt is not None and not vt.on_corridor:
+            center_room = self.game_map.rooms[vt.display_room]
+            view_cx, view_cy = self._room_center(center_room, scale)
+        elif vt is not None and vt.on_corridor:
+            pos = self._transit_corridor_xy(player, scale)
+            if pos is not None:
+                view_cx, view_cy = pos
             else:
                 center_room = self.game_map.rooms[player.current_room]
                 view_cx, view_cy = self._room_center(center_room, scale)
@@ -559,7 +619,7 @@ class MapRenderer:
         title_h = 36
         final = Image.new("RGB", (cropped.width, cropped.height + title_h), HUD_BG)
         final_draw = ImageDraw.Draw(final)
-        room_label = player.current_room.replace("_", " ").title()
+        room_label = self._player_display_room(player).replace("_", " ").title()
         final_draw.text(
             (cropped.width // 2, title_h // 2),
             f"Local View — {room_label}",
@@ -688,44 +748,67 @@ class MapRenderer:
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, state: GameState,
         visible_ids: list[str], viewer: Player,
     ) -> None:
-        # If the viewer is in transit, show other visible players as being in
-        # the corridor as well (not snapped to room centers).
-        if viewer.is_in_transit and viewer.moving_to:
+        viewer_vt = self._visual_transit(viewer)
+        viewer_on_corridor = viewer_vt is not None and viewer_vt.on_corridor
+
+        # Viewer traveling on a corridor: draw other visible players similarly.
+        if viewer_on_corridor:
             for pid in visible_ids:
                 p = state.players.get(pid)
                 if not p or not p.is_alive or pid == viewer.player_id:
                     continue
-                room_a = self.game_map.rooms.get(p.current_room)
-                room_b = self.game_map.rooms.get(p.moving_to)
-                if not room_a or not room_b:
+                pos = self._transit_corridor_xy(p, scale)
+                if pos is not None:
+                    px, py = pos
+                    name = self._get_player_name(pid)
+                    self._paste_sprite(img, pid, px, py, scale=3)
+                    draw.text((px, py - 40), name, fill=TEXT_WHITE,
+                              font=self._font_md, anchor="mb")
                     continue
-                ca = self._room_center(room_a, scale)
-                cb = self._room_center(room_b, scale)
-                weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
-                total = max(1, weight)
-                traveled = weight - p.move_ticks_remaining
-                progress = traveled / total if total > 0 else 0.5
-                progress = max(0.2, min(0.8, progress))
-                px = int(ca[0] + (cb[0] - ca[0]) * progress)
-                py = int(ca[1] + (cb[1] - ca[1]) * progress)
-                name = self._get_player_name(pid)
-                self._paste_sprite(img, pid, px, py, scale=3)
-                draw.text((px, py - 40), name, fill=TEXT_WHITE,
-                          font=self._font_md, anchor="mb")
+                p_vt = self._visual_transit(p)
+                if p_vt is not None and not p_vt.on_corridor:
+                    room = self.game_map.rooms.get(p_vt.display_room)
+                    if room:
+                        cx, cy = self._room_center(room, scale)
+                        name = self._get_player_name(pid)
+                        self._paste_sprite(img, pid, cx, cy, scale=3)
+                        draw.text((cx, cy - 40), name, fill=TEXT_WHITE,
+                                  font=self._font_md, anchor="mb")
             return
 
-        # Viewer is in a room: draw other visible players grouped by room.
+        # Viewer is in a room (or visually arrived): group others by display room.
         room_players: dict[str, list[str]] = {}
+        corridor_ids: list[str] = []
         for pid in visible_ids:
             p = state.players.get(pid)
-            if p and p.is_alive and pid != viewer.player_id:
-                room_players.setdefault(p.current_room, []).append(pid)
+            if not p or not p.is_alive or pid == viewer.player_id:
+                continue
+            p_vt = self._visual_transit(p)
+            if p_vt is not None and p_vt.on_corridor:
+                corridor_ids.append(pid)
+            else:
+                display = p_vt.display_room if p_vt is not None else p.current_room
+                room_players.setdefault(display, []).append(pid)
 
+        for pid in corridor_ids:
+            p = state.players[pid]
+            pos = self._transit_corridor_xy(p, scale)
+            if pos is None:
+                continue
+            px, py = pos
+            name = self._get_player_name(pid)
+            self._paste_sprite(img, pid, px, py, scale=3, variant="walk")
+            draw.text((px, py - 40), name, fill=TEXT_WHITE,
+                      font=self._font_md, anchor="mb")
+
+        viewer_display = (
+            viewer_vt.display_room if viewer_vt is not None else viewer.current_room
+        )
         for room_name, pids in room_players.items():
             room = self.game_map.rooms[room_name]
             cx, cy = self._room_center(room, scale)
 
-            viewer_here = viewer.current_room == room_name
+            viewer_here = viewer_display == room_name
             base_y = cy - 30 if viewer_here else cy
             spacing = 56
             n = len(pids)
@@ -833,21 +916,16 @@ class MapRenderer:
     def _draw_viewer_local(
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, player: Player,
     ) -> None:
-        # If moving, draw the viewer inside the corridor; otherwise at room center.
-        if player.is_in_transit and player.moving_to:
-            room_a = self.game_map.rooms.get(player.current_room)
-            room_b = self.game_map.rooms.get(player.moving_to)
-            if not room_a or not room_b:
+        vt = self._visual_transit(player)
+        if vt is not None and not vt.on_corridor:
+            room = self.game_map.rooms[vt.display_room]
+            cx, cy = self._room_center(room, scale)
+            cy += 24
+        elif vt is not None and vt.on_corridor:
+            pos = self._transit_corridor_xy(player, scale)
+            if pos is None:
                 return
-            ca = self._room_center(room_a, scale)
-            cb = self._room_center(room_b, scale)
-            weight = self.game_map.get_corridor_weight(player.current_room, player.moving_to)
-            total = max(1, weight)
-            traveled = weight - player.move_ticks_remaining
-            progress = traveled / total if total > 0 else 0.5
-            progress = max(0.2, min(0.8, progress))
-            cx = int(ca[0] + (cb[0] - ca[0]) * progress)
-            cy = int(ca[1] + (cb[1] - ca[1]) * progress)
+            cx, cy = pos
         else:
             room = self.game_map.rooms[player.current_room]
             cx, cy = self._room_center(room, scale)
@@ -1024,7 +1102,7 @@ class MapRenderer:
             player = state.players.get(pid)
             if player:
                 color = self._get_player_color(pid)
-                status = "DEAD" if not player.is_alive else player.current_room
+                status = "DEAD" if not player.is_alive else self._player_display_room(player)
                 role_tag = f" [{player.role_name}]"
                 label = f"{player.name}{role_tag} — {status}"
                 draw.rectangle((x, y, x + thumb_w, y + label_h),
@@ -1135,11 +1213,14 @@ class MapRenderer:
         and optional chat bubbles for players who spoke this tick."""
         from quack.engine.game_state import Team
 
-        # Stationary alive players
+        # Stationary alive players (including visually arrived in-transit)
         room_alive: dict[str, list[str]] = {}
         for p in state.alive_players:
-            if not p.is_in_transit:
+            vt = self._visual_transit(p)
+            if vt is None:
                 room_alive.setdefault(p.current_room, []).append(p.player_id)
+            elif not vt.on_corridor:
+                room_alive.setdefault(vt.display_room, []).append(p.player_id)
 
         for room_name, pids in room_alive.items():
             room = self.game_map.rooms[room_name]
@@ -1156,31 +1237,12 @@ class MapRenderer:
                     img, draw, px, py, pid, state, scale, chat_by_player,
                 )
 
-        # In-transit players — draw on corridor
+        # In-transit players still on the corridor (end-of-tick visual step)
         for p in state.alive_players:
-            if not p.is_in_transit:
+            pos = self._transit_corridor_xy(p, scale, offset_y)
+            if pos is None:
                 continue
-            room_a = self.game_map.rooms.get(p.current_room)
-            room_b = self.game_map.rooms.get(p.moving_to)
-            if not room_a or not room_b:
-                continue
-            ca = self._room_center(room_a, scale)
-            cb = self._room_center(room_b, scale)
-            ca = (ca[0], ca[1] + offset_y)
-            cb = (cb[0], cb[1] + offset_y)
-
-            # Position in-transit players clearly inside the corridor.
-            # Use the full edge weight as the travel length so that as soon
-            # as movement starts they appear slightly away from the room,
-            # and never exactly on top of either room center.
-            weight = self.game_map.get_corridor_weight(p.current_room, p.moving_to)
-            total = max(1, weight)
-            traveled = weight - p.move_ticks_remaining
-            progress = traveled / total if total > 0 else 0.5
-            progress = max(0.2, min(0.8, progress))
-
-            px = int(ca[0] + (cb[0] - ca[0]) * progress)
-            py = int(ca[1] + (cb[1] - ca[1]) * progress)
+            px, py = pos
 
             sprite_scale = max(2, int(2 * scale))
             self._paste_sprite(img, p.player_id, px, py, scale=sprite_scale, variant="walk")
@@ -1288,7 +1350,7 @@ class MapRenderer:
                       font=self._font_sm, anchor="lm")
 
             # Room
-            room_label = player.current_room.replace("_", " ")
+            room_label = self._player_display_room(player).replace("_", " ")
             draw.text((x + w - 14, roster_y), room_label,
                       fill=TEXT_DIM, font=self._font_sm, anchor="rm")
 
