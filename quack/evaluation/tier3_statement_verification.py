@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -347,6 +348,35 @@ def normalize_room_name(name: str) -> str | None:
     return None
 
 
+# Bug G2: span/until/onward cues that signal the phrase describes a
+# duration extending past the round opening. Their presence suppresses
+# the opening-window clamp below (e.g. "from the start until tick 20"
+# must NOT collapse to [0, 5] just because "start" appears).
+_TEMPORAL_SPAN_CUES = (
+    "until", "till", "up to", "through", "to tick",
+    "onward", "onwards", "then", "after that", "later",
+    "whole", "entire", "all round", "the rest",
+)
+
+# Opening-only keywords that trigger the early-round clamp ONLY when no
+# span cue is present. (Substring matching is preserved for backward
+# compatibility — "at the start", "start of the round", "beginning",
+# "right after spawn", and "respawn" all still trigger.)
+_TEMPORAL_OPENING_KEYWORDS = ("start", "beginning", "spawn", "respawn")
+
+# Bug G2: detect explicit "tick N" bounds the speaker stated themselves.
+# Conservative: an upper bound is only recognized when one of a small
+# set of upper-bound prepositions ("until", "by", "before", "up to",
+# "through") immediately precedes "tick N", so phrases like "after
+# tick 10" are NOT misread as upper bounds.
+_EXPLICIT_UPPER_TICK_RE = re.compile(
+    r"\b(?:until|till|by|before|up\s+to|through)\s+tick\s+(\d+)\b"
+)
+_EXPLICIT_LOWER_TICK_RE = re.compile(
+    r"\b(?:from|since|after|starting\s+from|starting\s+at)\s+tick\s+(\d+)\b"
+)
+
+
 def _determine_round_range(
     meeting_tick: int,
     timeline: GameTimeline,
@@ -356,10 +386,32 @@ def _determine_round_range(
     """Determine the tick range for claim verification.
 
     The base window is the free-roam segment that *precedes* the meeting
-    (ending at ``meeting_tick - 1``). For presence-style location/route
-    claims, set ``include_meeting_tick=True`` to extend the right edge to
-    ``meeting_tick`` itself — this admits the body-reporter's arrival at
-    the body room on the report tick (Bug G).
+    (ending at ``meeting_tick - 1``).
+
+    Window-adjustment policy (applied in order):
+
+    1. **Explicit speaker-stated bounds (Bug G2).** ``until tick N`` /
+       ``by tick N`` / etc. → ``round_end = min(round_end, N)``.
+       ``from tick M`` / ``since tick M`` / etc. → ``round_start =
+       max(round_start, M)``. The phrase is treated as a span and the
+       opening-window clamp below is suppressed.
+    2. **Span cues (Bug G2).** If the phrase contains a span cue (e.g.
+       ``"until"``, ``"whole"``, ``"onward"``, ``"the rest"``), the
+       opening-window clamp is suppressed even without an explicit
+       tick — the speaker is describing a duration that extends past
+       the round opening.
+    3. **Opening-only clamp.** When the phrase mentions ``start`` /
+       ``beginning`` / ``spawn`` / ``respawn`` *and* no span cue or
+       explicit upper tick is present, the right edge is clamped to
+       ``round_start + 5`` (genuine "at the start" claims). This is
+       the original behavior, now tightened so it only fires on
+       opening-only phrasing.
+    4. **Bug G — meeting-tick admission.** If ``include_meeting_tick``
+       is set (presence-style location/route claims) and neither the
+       opening clamp nor an explicit upper tick narrowed the window,
+       the right edge is extended through ``meeting_tick`` so a
+       body-reporter standing in the body room on the report tick is
+       verifiable.
 
     ``include_meeting_tick`` must NOT be set for ``most_time`` /
     ``entire_time`` semantics: those compute occupancy fractions over
@@ -381,15 +433,45 @@ def _determine_round_range(
 
     temporal_lower = temporal.lower() if temporal else ""
 
-    if any(kw in temporal_lower for kw in ["start", "beginning", "spawn", "respawn"]):
-        # First few ticks of the round
-        round_end = min(round_start + 5, round_end)
-    elif include_meeting_tick:
-        # Bug G: admit the reporter's arrival tick (the room they're
-        # standing in *at the meeting tick* is real and recorded in
-        # ``rooms_touched`` — but the free-roam segment ended one tick
-        # earlier, so without this extension a truthful "I found the
-        # body in security" gets scored ``false``).
+    # (1) Explicit speaker-stated bounds (Bug G2). These narrow only;
+    # an upper bound greater than the segment end is clamped to the
+    # segment end (we never invent ticks the speaker didn't have).
+    explicit_upper_seen = False
+    if temporal_lower:
+        m = _EXPLICIT_UPPER_TICK_RE.search(temporal_lower)
+        if m:
+            try:
+                n = int(m.group(1))
+                round_end = min(round_end, max(round_start, n))
+                explicit_upper_seen = True
+            except ValueError:
+                pass
+        m2 = _EXPLICIT_LOWER_TICK_RE.search(temporal_lower)
+        if m2:
+            try:
+                n2 = int(m2.group(1))
+                round_start = max(round_start, min(round_end, n2))
+            except ValueError:
+                pass
+
+    # (2) + (3) opening-only clamp, suppressed by span cues or any
+    # explicit tick bound.
+    has_span_cue = any(cue in temporal_lower for cue in _TEMPORAL_SPAN_CUES)
+    opening_clamp_applied = False
+    if not has_span_cue and not explicit_upper_seen:
+        if any(kw in temporal_lower for kw in _TEMPORAL_OPENING_KEYWORDS):
+            round_end = min(round_start + 5, round_end)
+            opening_clamp_applied = True
+
+    # (4) Bug G — meeting-tick admission. Skip when the speaker
+    # bounded the claim themselves (explicit upper tick) or restricted
+    # it to the opening (opening clamp); both are explicit narrower
+    # intents we must respect.
+    if (
+        include_meeting_tick
+        and not opening_clamp_applied
+        and not explicit_upper_seen
+    ):
         round_end = max(round_end, meeting_tick)
 
     return round_start, round_end

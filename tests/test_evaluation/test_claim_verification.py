@@ -461,6 +461,212 @@ class TestDetermineRoundRange:
         assert re == 6
 
 
+class TestBugG2StartKeywordOverclamp:
+    """Bug G2 — the "start" keyword substring match used to hard-clamp
+    the verification window to ``[round_start, round_start + 5]``
+    whenever the temporal phrase contained ``start`` / ``beginning`` /
+    ``spawn`` / ``respawn``. This collapsed truthful span phrases like
+    "from the start until tick 20" down to [0, 5] and produced
+    spurious spatial-hallucination verdicts.
+
+    The fix:
+    - explicit ``until tick N`` upper bound is honored (narrow only);
+    - span cues (``until``, ``whole``, ``onward``, ...) suppress the
+      opening clamp even without an explicit tick;
+    - the opening clamp only fires on genuinely opening-only phrasing.
+    """
+
+    @staticmethod
+    def _make_timeline(segments: list[tuple[int, int]],
+                       max_tick: int = 25) -> GameTimeline:
+        tl = GameTimeline()
+        tl.max_tick = max_tick
+        tl.free_roam_segments = [{"start": s, "end": e} for s, e in segments]
+        return tl
+
+    def test_span_phrase_is_not_clamped(self) -> None:
+        """The core fix — "from the start until tick 20" must NOT
+        collapse to [0, 5]. ``until tick 20`` should make the window
+        run to tick 20 (the spec requires ``round_end >= 20``)."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(
+            22, tl, "this round, from the start until tick 20",
+        )
+        assert rs == 0
+        assert re >= 20, (
+            f"Bug G2: span phrase was incorrectly clamped (got end={re}, "
+            "expected at least 20)"
+        )
+
+    def test_explicit_upper_tick_honored(self) -> None:
+        """``from the start until tick 12`` → round_end = 12."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "from the start until tick 12")
+        assert rs == 0
+        assert re == 12
+
+    def test_explicit_upper_tick_cannot_exceed_segment(self) -> None:
+        """``until tick 50`` cannot widen the window beyond the actual
+        free-roam segment — the speaker can only narrow."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "until tick 50")
+        assert rs == 0
+        assert re == 21
+
+    def test_opening_only_phrase_still_clamps(self) -> None:
+        """Guardrail — a genuine opening-only claim like "at the very
+        start" must still clamp to round_start + 5 so an opponent who
+        falsely claims an opening location can be caught."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "at the very start")
+        assert rs == 0
+        assert re == 5
+
+    def test_bare_beginning_still_clamps(self) -> None:
+        """Bare ``beginning`` with no span cue keeps the original
+        clamp behavior (existing tests rely on this)."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "at the beginning")
+        assert rs == 0
+        assert re == 5
+
+    def test_spawn_keyword_with_span_cue_unclamped(self) -> None:
+        """``after we spawned, until later in the round`` is a span
+        phrase even though it mentions spawn — must not clamp to 5."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(
+            22, tl, "after we spawned, until tick 18",
+        )
+        assert rs == 0
+        assert re == 18
+
+    def test_explicit_lower_tick_raises_start(self) -> None:
+        """``from tick 10`` lifts round_start to 10."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "from tick 10 onwards")
+        assert rs == 10
+        # ``onwards`` is a span cue + no upper tick → round_end stays
+        # at the free-roam-segment end.
+        assert re == 21
+
+    def test_after_tick_n_is_not_misread_as_upper_bound(self) -> None:
+        """Guardrail — ``after tick 10`` is a LOWER bound, not an
+        upper bound. The conservative regex must not collapse the
+        window to [0, 10]."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(22, tl, "after tick 10")
+        assert rs == 10
+        assert re == 21
+
+    def test_meeting_tick_extension_skipped_when_speaker_bounded(self) -> None:
+        """If the speaker said ``until tick 20`` we respect that —
+        the Bug G meeting-tick admission must NOT override an explicit
+        speaker-stated upper bound."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(
+            22, tl, "until tick 20", include_meeting_tick=True,
+        )
+        assert re == 20  # NOT 22
+
+    def test_meeting_tick_extension_still_works_for_plain_this_round(
+        self,
+    ) -> None:
+        """Bug G regression — ``this round`` with
+        include_meeting_tick=True still extends through meeting_tick."""
+        tl = self._make_timeline([(0, 21)])
+        rs, re = _determine_round_range(
+            22, tl, "this round", include_meeting_tick=True,
+        )
+        assert re == 22
+
+    def test_frank_route_claim_verifies_true_after_fix(
+        self, simple_map: GameMap,
+    ) -> None:
+        """End-to-end: a multi-room claim like Frank's
+        ``lower_engine`` / ``medbay`` / ``electrical`` ("this round,
+        from the start until tick 20") must now verify ``true`` for
+        each room the subject actually visited.
+        """
+        from quack.evaluation.tier3_statement_verification import (
+            verify_location_claim,
+        )
+        # Synthetic timeline: subject visits lower_engine [7,11], medbay
+        # [14,17], electrical [17,21] and is otherwise in cafeteria.
+        tl = GameTimeline()
+        tl.max_tick = 21
+        tl.player_names = {"player_5": "Frank"}
+        tl.player_teams = {"player_5": "goose"}
+        tl.free_roam_segments = [{"start": 0, "end": 21}]
+
+        def room_at(t: int) -> str:
+            if 7 <= t <= 11:
+                return "lower_engine"
+            if 14 <= t <= 16:
+                return "medbay"
+            if 17 <= t <= 21:
+                return "electrical"
+            return "cafeteria"
+        tl.player_timelines = {
+            "player_5": [
+                PlayerTickState(
+                    tick=t, room=room_at(t),
+                    rooms_touched=(room_at(t),),
+                )
+                for t in range(22)
+            ],
+        }
+        n2i = {"Frank": "player_5"}
+
+        rs, re = _determine_round_range(
+            22, tl, "this round, from the start until tick 20",
+        )
+        assert rs == 0 and re >= 20
+
+        for room in ("lower_engine", "medbay", "electrical"):
+            claim = {
+                "type": "location", "subject": "Frank", "room": room,
+                "temporal": "this round, from the start until tick 20",
+            }
+            result = verify_location_claim(claim, tl, n2i, rs, re)
+            assert result.verdict == "true", (
+                f"Frank truthfully visited {room}; got {result.verdict} "
+                f"({result.reason})"
+            )
+
+    def test_opening_only_claim_about_unvisited_room_still_false(
+        self,
+    ) -> None:
+        """Guardrail — the opening clamp must still catch genuinely
+        false opening claims. If P claims room R "at the very start"
+        but never visited R in the first 5 ticks, that's still
+        ``false``."""
+        from quack.evaluation.tier3_statement_verification import (
+            verify_location_claim,
+        )
+        tl = GameTimeline()
+        tl.max_tick = 21
+        tl.player_names = {"player_0": "Alice"}
+        tl.player_teams = {"player_0": "goose"}
+        tl.free_roam_segments = [{"start": 0, "end": 21}]
+        # Alice is in cafeteria the whole round.
+        tl.player_timelines = {
+            "player_0": [
+                PlayerTickState(tick=t, room="cafeteria",
+                                rooms_touched=("cafeteria",))
+                for t in range(22)
+            ],
+        }
+        n2i = {"Alice": "player_0"}
+        rs, re = _determine_round_range(22, tl, "at the very start")
+        assert (rs, re) == (0, 5)
+        claim = {
+            "type": "location", "subject": "Alice", "room": "medbay",
+            "temporal": "at the very start",
+        }
+        result = verify_location_claim(claim, tl, n2i, rs, re)
+        assert result.verdict == "false"
+
+
 class TestDurationSemantics:
     """Tests for _infer_duration_semantics rule-based inference."""
 
