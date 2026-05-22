@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from quack.evaluation.game_reconstructor import (
     GameReconstructor,
@@ -11,7 +10,7 @@ from quack.evaluation.game_reconstructor import (
 )
 from quack.map.game_map import GameMap
 
-from .conftest import build_minimal_game_events, make_event
+from .conftest import make_event
 
 
 class TestHopDistance:
@@ -183,3 +182,132 @@ class TestGameTimeline:
         timeline = GameReconstructor(minimal_game_events, simple_map).reconstruct()
         assert len(timeline.meeting_boundaries) == 1
         assert timeline.meeting_boundaries[0]["preceding_free_roam_index"] == 0
+
+
+class TestRoomsTouchedAndPassThrough:
+    """Bug A: transit-destination and same-tick pass-through rooms must be
+    queryable, even when the engine logs the *next* hop on the same tick the
+    previous transit completes (the "Diana arrives at medbay, immediately
+    moves on to electrical" case).
+    """
+
+    def _diana_events(self) -> list[dict]:
+        """Build a minimal event log reproducing the Diana / medbay case.
+
+        Tick 17: Diana issues storage -> medbay with weight 2.
+                 Engine logs ``ticks_remaining=2``, so transit ticks down
+                 over ticks 18 and 19.
+        Tick 19: Transit completes at start-of-tick (Diana enters medbay)
+                 and the engine logs a same-tick instantaneous
+                 ``medbay -> electrical`` move.
+
+        With the pre-fix reconstructor Diana's medbay arrival was lost
+        because ``current_room`` was immediately overwritten to
+        ``electrical``.
+        """
+        return [
+            make_event("game_started", 0, {
+                "players": ["Diana"],
+                "config": {"num_players": 1, "num_ducks": 0, "map": "configs/maps/simple_ship.yaml"},
+                "initial_state": {
+                    "player_0": {
+                        "name": "Diana", "role": "Goose", "team": "goose",
+                        "room": "storage", "tasks": [],
+                    }
+                },
+            }),
+            make_event("tick_start", 17, {"tick": 17}),
+            make_event("player_moved", 17, {
+                "player_id": "player_0",
+                "from": "storage",
+                "to": "medbay",
+                "ticks_remaining": 2,
+            }),
+            make_event("tick_end", 17, {"tick": 17}),
+            make_event("tick_start", 18, {"tick": 18}),
+            make_event("tick_end", 18, {"tick": 18}),
+            make_event("tick_start", 19, {"tick": 19}),
+            # Pass-through: transit completes -> medbay at start of tick 19,
+            # then a same-tick instantaneous move medbay -> electrical.
+            make_event("player_moved", 19, {
+                "player_id": "player_0",
+                "from": "medbay",
+                "to": "electrical",
+            }),
+            make_event("tick_end", 19, {"tick": 19}),
+            make_event("game_over", 21, {"winner": "goose", "reason": "test"}),
+        ]
+
+    def test_was_in_room_recovers_pass_through_medbay(self, simple_map) -> None:
+        """The headline regression: Diana's medbay arrival must be
+        recoverable from the timeline even though the engine logged the
+        next hop on the same tick. Without ``rooms_touched`` this returned
+        ``[]`` and a truthful claim got scored ``false``.
+        """
+        timeline = GameReconstructor(self._diana_events(), simple_map).reconstruct()
+        medbay_ticks = timeline.was_in_room("player_0", "medbay", 0, 21)
+        # At minimum, the arrival tick (19) must be flagged. Whether tick 18
+        # also counts depends on the transit-accounting convention; the
+        # current implementation reports medbay touched at tick 19 only.
+        assert medbay_ticks, (
+            f"medbay arrival was lost from the timeline (was_in_room returned {medbay_ticks!r}). "
+            "Bug A regression: same-tick pass-through rooms are not being recorded."
+        )
+        assert 19 in medbay_ticks
+
+    def test_was_in_room_reports_origin_and_destination_for_full_route(
+        self, simple_map,
+    ) -> None:
+        """All three rooms Diana touched (storage, medbay, electrical)
+        must be queryable from the timeline.
+        """
+        timeline = GameReconstructor(self._diana_events(), simple_map).reconstruct()
+        assert timeline.was_in_room("player_0", "storage", 0, 21), \
+            "Origin room storage should be queryable from before transit"
+        assert timeline.was_in_room("player_0", "medbay", 0, 21), \
+            "Pass-through room medbay should be queryable"
+        assert timeline.was_in_room("player_0", "electrical", 0, 21), \
+            "Destination room electrical should be queryable"
+
+    def test_was_in_room_returns_empty_for_unvisited_room(self, simple_map) -> None:
+        """Sanity: a room the player never entered must not show up."""
+        timeline = GameReconstructor(self._diana_events(), simple_map).reconstruct()
+        assert timeline.was_in_room("player_0", "weapons", 0, 21) == []
+
+    def test_was_in_room_skips_dead_ticks(self, minimal_game_events, simple_map) -> None:
+        """A dead player must not match any room even if their scalar
+        ``state.room`` still reads as the room they died in (we don't want
+        ghost matches polluting Tier 3)."""
+        timeline = GameReconstructor(minimal_game_events, simple_map).reconstruct()
+        # Eve dies at tick 5 in security in the minimal fixture.
+        eve_security = timeline.was_in_room("player_4", "security", 6, 10)
+        assert eve_security == [], (
+            f"dead player matched on room state (got {eve_security!r}); "
+            "was_in_room must skip dead ticks"
+        )
+
+    def test_rooms_touched_scalar_room_unchanged(self, simple_map) -> None:
+        """The scalar ``state.room`` field must keep its end-of-tick
+        semantics — the rooms_touched addition is non-breaking."""
+        timeline = GameReconstructor(self._diana_events(), simple_map).reconstruct()
+        # End-of-tick room at tick 19 is electrical (the final destination).
+        s19 = timeline.get_player_state("player_0", 19)
+        assert s19 is not None
+        assert s19.room == "electrical"
+        # End-of-tick room at tick 18 is still storage (still in transit).
+        s18 = timeline.get_player_state("player_0", 18)
+        assert s18 is not None
+        assert s18.room == "storage"
+
+    def test_get_visited_rooms_returns_ordered_chain(self, simple_map) -> None:
+        """get_visited_rooms must surface the ordered chain
+        ``storage -> medbay -> electrical`` for the Diana case so route
+        verification can use it directly."""
+        timeline = GameReconstructor(self._diana_events(), simple_map).reconstruct()
+        chain = timeline.get_visited_rooms("player_0", 0, 21)
+        assert chain[0] == "storage"
+        assert "medbay" in chain
+        assert chain[-1] == "electrical"
+        # No adjacent duplicates
+        for a, b in zip(chain, chain[1:]):
+            assert a != b

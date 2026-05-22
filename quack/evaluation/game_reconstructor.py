@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from quack.evaluation.log_parser import get_initial_state
@@ -19,7 +19,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PlayerTickState:
-    """Snapshot of a single player's state at one tick."""
+    """Snapshot of a single player's state at one tick.
+
+    ``room`` is the *primary* / end-of-tick room (kept for backward
+    compatibility — every existing downstream consumer reads this field).
+
+    ``rooms_touched`` is the set of rooms the player actually occupied at any
+    point during this tick, in the order they were entered. It is the field
+    to use for "was the player ever in room R during window W" queries (see
+    ``GameTimeline.was_in_room``). For a stationary tick this is just
+    ``(room,)``. For a tick where the player arrived from transit and
+    immediately departed via a same-tick ``player_moved`` event (the
+    "pass-through" case — e.g. Diana arrives at medbay and on the same tick
+    moves on to electrical), ``room`` will be the final destination but
+    ``rooms_touched`` records ``("medbay", "electrical")``. Without this
+    field, transit-destination rooms were silently dropped from the
+    reconstructed timeline.
+    """
 
     tick: int
     room: str
@@ -27,6 +43,7 @@ class PlayerTickState:
     moving_to: str | None = None
     is_alive: bool = True
     action: str = ""
+    rooms_touched: tuple[str, ...] = ()
 
 
 class GameTimeline:
@@ -84,12 +101,80 @@ class GameTimeline:
         return r1 == r2
 
     def get_room_sequence(self, player_id: str, start_tick: int, end_tick: int) -> list[str]:
-        """Return the sequence of rooms a player was in over a tick range."""
+        """Return the per-tick scalar room a player was in over a tick range.
+
+        One entry per tick (legacy API; preserved so old callers/tests keep
+        working). For the ordered, transit-aware chain of unique rooms
+        visited, use :py:meth:`get_visited_rooms` instead — that one folds
+        in transit arrivals and pass-through rooms via ``rooms_touched``.
+        """
         states = self.player_timelines.get(player_id, [])
         result = []
         for t in range(start_tick, min(end_tick + 1, len(states))):
             result.append(states[t].room)
         return result
+
+    def get_visited_rooms(
+        self,
+        player_id: str,
+        start_tick: int,
+        end_tick: int,
+    ) -> list[str]:
+        """Return the ordered chain of rooms the player occupied in the window.
+
+        Uses ``PlayerTickState.rooms_touched`` so transit arrivals and
+        same-tick pass-through hops are not dropped. Falls back to the
+        scalar ``room`` field for legacy / synthetic ``PlayerTickState``
+        values whose ``rooms_touched`` is empty. Adjacent duplicates are
+        collapsed so the returned sequence is the actual visitation order
+        suitable for ordered-subsequence route checks (see
+        ``verify_route_claim``).
+        """
+        states = self.player_timelines.get(player_id, [])
+        result: list[str] = []
+        for t in range(start_tick, min(end_tick + 1, len(states))):
+            state = states[t]
+            rooms = state.rooms_touched if state.rooms_touched else (state.room,)
+            for r in rooms:
+                if not result or result[-1] != r:
+                    result.append(r)
+        return result
+
+    def was_in_room(
+        self,
+        player_id: str,
+        room: str,
+        start_tick: int,
+        end_tick: int,
+    ) -> list[int]:
+        """Return the ticks in ``[start_tick, end_tick]`` (inclusive) at which
+        ``player_id`` occupied ``room``, counting transit-arrival and
+        pass-through rooms via ``PlayerTickState.rooms_touched``.
+
+        Falls back to the scalar ``state.room`` for legacy / synthetic
+        ``PlayerTickState`` values whose ``rooms_touched`` is the empty
+        tuple. Skips ticks where the player is dead or has no state, so the
+        returned list never contains spurious matches outside the player's
+        live window.
+
+        This is the query the Tier 3 location verifier should use instead of
+        a single-scalar room comparison — see ``verify_location_claim``.
+        """
+        states = self.player_timelines.get(player_id)
+        if not states:
+            return []
+        matched: list[int] = []
+        last = min(end_tick, len(states) - 1)
+        for t in range(max(start_tick, 0), last + 1):
+            state = states[t]
+            if not state.is_alive:
+                continue
+            if state.rooms_touched:
+                if room in state.rooms_touched:
+                    matched.append(t)
+            elif state.room == room:
+                matched.append(t)
+        return matched
 
     def is_alive(self, player_id: str, tick: int) -> bool:
         """Check if a player was alive at a given tick."""
@@ -172,13 +257,15 @@ class GameReconstructor:
 
         # Tick 0 state (initial positions before any action)
         for pid in player_ids:
+            spawn = current_room[pid]
             timeline.player_timelines[pid].append(PlayerTickState(
                 tick=0,
-                room=current_room[pid],
+                room=spawn,
                 in_transit=False,
                 moving_to=None,
                 is_alive=True,
                 action="",
+                rooms_touched=(spawn,),
             ))
 
         events_by_tick = self._group_events_by_tick()
@@ -186,16 +273,43 @@ class GameReconstructor:
         free_roam_segment_start = 0
         post_meeting_respawn_pending = False
 
+        # Per-tick scratch buffer that records every room each player
+        # actually occupied during the current tick, in entry order. This
+        # is what makes ``rooms_touched`` capture transit arrivals and
+        # same-tick pass-through hops. ``_touch`` is the only writer.
+        rooms_touched_this_tick: dict[str, list[str]] = {}
+
+        def _touch(pid: str, room: str | None) -> None:
+            if not room:
+                return
+            lst = rooms_touched_this_tick.setdefault(pid, [])
+            if not lst or lst[-1] != room:
+                lst.append(room)
+
         for tick in range(1, max_tick + 1):
-            # Advance transit at start of tick (mirrors engine behavior)
+            rooms_touched_this_tick = {}
+
+            # Advance transit at start of tick (mirrors engine behavior).
+            # An arrival here means the player just *entered* moving_to as
+            # the tick begins, so that room must count as touched even if
+            # a subsequent event in the same tick moves them on.
             arrived = []
             for pid, ti in list(transit.items()):
                 ti.ticks_remaining -= 1
                 if ti.ticks_remaining <= 0:
                     current_room[pid] = ti.moving_to
+                    _touch(pid, ti.moving_to)
                     arrived.append(pid)
             for pid in arrived:
                 del transit[pid]
+
+            # Seed every still-alive player's touched set with their
+            # current-room at tick start (post transit advance). For
+            # in-transit players this is the source room they're departing
+            # from; for stationary players it's just their room.
+            for pid in player_ids:
+                if is_alive.get(pid, False):
+                    _touch(pid, current_room.get(pid))
 
             actions_this_tick.clear()
             tick_events = events_by_tick.get(tick, [])
@@ -210,6 +324,10 @@ class GameReconstructor:
                         continue
                     ticks_remaining = data.get("ticks_remaining", 0)
                     if ticks_remaining and ticks_remaining > 0:
+                        # Departing on a multi-tick walk: source room must
+                        # be recorded as touched on this tick (the player
+                        # was there before transit started).
+                        _touch(pid, data["from"])
                         current_room[pid] = data["from"]
                         transit[pid] = _TransitInfo(
                             moving_to=data["to"],
@@ -217,6 +335,11 @@ class GameReconstructor:
                         )
                         actions_this_tick[pid] = f"move({data['to']})"
                     else:
+                        # Instantaneous move: the destination is entered
+                        # this tick. Record both endpoints to preserve the
+                        # ordered transit chain for pass-through cases.
+                        _touch(pid, data["from"])
+                        _touch(pid, data["to"])
                         current_room[pid] = data["to"]
                         if pid in transit:
                             del transit[pid]
@@ -238,12 +361,14 @@ class GameReconstructor:
                     # Infer room from task event
                     if data.get("room"):
                         current_room[pid] = data["room"]
+                        _touch(pid, data["room"])
 
                 elif et == "task_completed":
                     pid = data["player_id"]
                     actions_this_tick.setdefault(pid, "do_task()")
                     if data.get("room"):
                         current_room[pid] = data["room"]
+                        _touch(pid, data["room"])
 
                 elif et in ("body_reported", "meeting_called"):
                     caller = data.get("caller", "")
@@ -294,6 +419,7 @@ class GameReconstructor:
                     pid = data.get("player_id", "")
                     if data.get("room") and pid:
                         current_room[pid] = data["room"]
+                        _touch(pid, data["room"])
 
             # Build tick state for each player
             for pid in player_ids:
@@ -305,6 +431,14 @@ class GameReconstructor:
                 elif phase != "free_roam":
                     action = ""
 
+                touched_seq = rooms_touched_this_tick.get(pid)
+                if touched_seq:
+                    rooms_touched_tuple = tuple(touched_seq)
+                elif is_alive.get(pid, False):
+                    rooms_touched_tuple = (room,)
+                else:
+                    rooms_touched_tuple = ()
+
                 timeline.player_timelines[pid].append(PlayerTickState(
                     tick=tick,
                     room=room,
@@ -312,6 +446,7 @@ class GameReconstructor:
                     moving_to=transit[pid].moving_to if in_transit else None,
                     is_alive=is_alive.get(pid, False),
                     action=action,
+                    rooms_touched=rooms_touched_tuple,
                 ))
 
         # Record the final free-roam segment (after last meeting to game end)

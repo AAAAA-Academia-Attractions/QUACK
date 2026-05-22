@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-from pathlib import Path
 from typing import Any
 
 import pytest
