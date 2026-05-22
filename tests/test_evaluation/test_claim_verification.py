@@ -800,7 +800,11 @@ class TestAuditOutput:
         assert audit["meeting"]["meeting_type"] == "body_reported"
         assert "temporal_window" in audit
         assert audit["temporal_window"]["start_tick"] == 0
-        assert audit["temporal_window"]["end_tick"] == 6
+        # Bug G: presence-style location claims (``any_time`` semantics)
+        # admit the meeting tick itself so a reporter standing in the
+        # body room on the report tick is verifiable. Previously this
+        # was capped at meeting_tick - 1 = 6.
+        assert audit["temporal_window"]["end_tick"] == 7
         assert audit["temporal_window"]["resolution_source"] == "preceding_free_roam"
         assert "speaker" in audit
         assert audit["speaker"]["speaker_name"] == "Alice"
@@ -821,7 +825,9 @@ class TestAuditOutput:
         assert isinstance(audit["verification"]["evidence"]["ticks_checked"], list)
 
     def test_audit_temporal_window_reflects_preceding_free_roam(self, simple_map: GameMap) -> None:
-        """At meeting_tick=17, the audit temporal_window should be [0, 16] not [17, 17]."""
+        """At meeting_tick=17, the audit window should anchor on the
+        preceding free-roam segment [7, …] — not jump to [17, 17] (the
+        round it's inside)."""
         from quack.evaluation.tier3_statement_verification import StatementVerificationPipeline
         events = build_minimal_game_events()
         timeline = GameReconstructor(events, simple_map).reconstruct()
@@ -844,6 +850,8 @@ class TestAuditOutput:
         pipeline.role_map = {"player_0": "goose"}
         pipeline.duck_ids = set()
 
+        # any_time claim — under Bug G the window extends through the
+        # meeting tick (17).
         claim = {"type": "location", "subject": "Alice", "room": "cafeteria",
                  "temporal": "this round",
                  "_speaker_id": "player_0", "_speaker_name": "Alice",
@@ -851,9 +859,19 @@ class TestAuditOutput:
         meeting = {"tick": 17, "type": "meeting_called", "caller": "player_0"}
         result = pipeline._verify_claim(claim, 17)
         audit = pipeline._build_audit_entry(claim, meeting, 1, result)
-
         assert audit["temporal_window"]["start_tick"] == 7
-        assert audit["temporal_window"]["end_tick"] == 16
+        assert audit["temporal_window"]["end_tick"] == 17
+
+        # most_time claim — explicitly NOT extended (Bug G guardrail:
+        # don't shift the occupancy-fraction denominator).
+        claim2 = {"type": "location", "subject": "Alice", "room": "cafeteria",
+                  "temporal": "most of the round",
+                  "_speaker_id": "player_0", "_speaker_name": "Alice",
+                  "_meeting_idx": 1, "_meeting_tick": 17}
+        result2 = pipeline._verify_claim(claim2, 17)
+        audit2 = pipeline._build_audit_entry(claim2, meeting, 1, result2)
+        assert audit2["temporal_window"]["start_tick"] == 7
+        assert audit2["temporal_window"]["end_tick"] == 16
 
 
 class TestAuditGroundTruthEvents:
@@ -1271,3 +1289,288 @@ class TestBackwardCompatibility:
         d = result.to_dict()
         assert "tier3" in d
         assert "tier3_audit_path" not in d["tier3"]
+
+
+class TestBugGMeetingTickWindow:
+    """Bug G — meeting-tick / body-room window truncation.
+
+    A claim about being in the body room *at the report tick* must be
+    verifiable: under the pre-fix logic the verification window ended
+    at ``meeting_tick - 1``, so the reporter's actual arrival room (at
+    ``meeting_tick``) was outside the window and the truthful claim
+    was scored ``false``. This is what produced the 3 spurious
+    spatial-hallucination claims in seed=1 (Diana / Charlie / Frank
+    all referring to Diana in security).
+    """
+
+    def _build_body_report_events(self) -> list[dict[str, Any]]:
+        """Mirror the seed=1 Diana scenario.
+
+        Player_3 (Diana) departs electrical at tick 20 with
+        ``ticks_remaining=2``; she arrives at security on tick 22 and
+        reports Eve's body in the same tick, triggering the meeting.
+        """
+        from .conftest import make_event
+
+        events: list[dict[str, Any]] = []
+
+        initial_state = {}
+        names = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
+        spawn_rooms = ["cafeteria", "medbay", "weapons",
+                       "electrical", "security", "oxygen"]
+        for i in range(6):
+            pid = f"player_{i}"
+            initial_state[pid] = {
+                "name": names[i],
+                "role": "Duck" if i == 5 else "Goose",
+                "team": "duck" if i == 5 else "goose",
+                "room": spawn_rooms[i],
+                "tasks": [],
+            }
+
+        events.append(make_event("game_started", 0, {
+            "players": names,
+            "config": {"num_players": 6, "num_ducks": 1,
+                       "map": "configs/maps/simple_ship.yaml"},
+            "initial_state": initial_state,
+        }))
+
+        meeting_tick = 22
+        for tick in range(1, meeting_tick + 1):
+            events.append(make_event("tick_start", tick, {"tick": tick}))
+
+            if tick == 5:
+                events.append(make_event("player_killed", tick, {
+                    "killer_id": "player_5",
+                    "target_id": "player_4",
+                    "room": "security",
+                }))
+
+            if tick == 20:
+                events.append(make_event("player_moved", tick, {
+                    "player_id": "player_3",
+                    "from": "electrical",
+                    "to": "security",
+                    "ticks_remaining": 2,
+                }))
+
+            if tick == meeting_tick:
+                events.append(make_event("body_reported", tick, {
+                    "caller": "player_3",
+                    "reason": "Diana reported a dead body",
+                    "bodies": [
+                        {"room": "security", "victim_name": "Eve"},
+                    ],
+                }))
+                events.append(make_event("phase_changed", tick,
+                                         {"phase": "discussion"}))
+                events.append(make_event("discussion_message", tick, {
+                    "player_id": "player_3",
+                    "message": "I found Eve's body in security.",
+                }))
+                events.append(make_event("phase_changed", tick,
+                                         {"phase": "voting"}))
+                events.append(make_event("phase_changed", tick,
+                                         {"phase": "free_roam"}))
+
+            events.append(make_event("tick_end", tick, {"tick": tick}))
+
+        events.append(make_event("game_over", meeting_tick, {
+            "winner": "goose",
+            "reason": "test fixture",
+        }))
+        return events
+
+    def _build_pipeline(self, simple_map: GameMap) -> tuple[Any, int]:
+        from quack.evaluation.tier3_statement_verification import (
+            StatementVerificationPipeline,
+        )
+        events = self._build_body_report_events()
+        timeline = GameReconstructor(events, simple_map).reconstruct()
+        pipeline = StatementVerificationPipeline.__new__(
+            StatementVerificationPipeline,
+        )
+        pipeline.timeline = timeline
+        pipeline.game_map = simple_map
+        pipeline.events = events
+        pipeline.name_to_id = {
+            "Alice": "player_0", "Bob": "player_1", "Charlie": "player_2",
+            "Diana": "player_3", "Eve": "player_4", "Frank": "player_5",
+        }
+        pipeline.id_to_name = {v: k for k, v in pipeline.name_to_id.items()}
+        pipeline.role_map = {pid: ("duck" if pid == "player_5" else "goose")
+                             for pid in pipeline.name_to_id.values()}
+        pipeline.duck_ids = {"player_5"}
+        return pipeline, 22
+
+    def test_reconstructor_places_diana_in_security_at_meeting_tick(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Sanity check: the Bug A reconstructor records Diana in
+        security at tick 22 (otherwise the Bug G fix has nothing to
+        admit). This anchors the test against actual ground truth."""
+        events = self._build_body_report_events()
+        timeline = GameReconstructor(events, simple_map).reconstruct()
+        ticks = timeline.was_in_room("player_3", "security", 0, 22)
+        assert 22 in ticks, (
+            "Reconstructor must place Diana in security at the meeting "
+            f"tick (got ticks={ticks})"
+        )
+
+    def test_body_report_presence_claim_is_true(
+        self, simple_map: GameMap,
+    ) -> None:
+        """The core fix: Diana's "I reported the body in security" claim
+        must verify as ``true`` (was ``false`` under the truncated
+        window)."""
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location",
+            "subject": "Diana",
+            "room": "security",
+            "temporal": "when I reported the body",
+            "_speaker_id": "player_3", "_speaker_name": "Diana",
+            "_meeting_idx": 0, "_meeting_tick": meeting_tick,
+        }
+        result = pipeline._verify_claim(claim, meeting_tick)
+        assert result.verdict == "true", (
+            f"Diana truthfully reported the body in security at tick "
+            f"{meeting_tick}; verdict={result.verdict}, "
+            f"reason={result.reason}"
+        )
+
+    def test_bystander_reference_to_body_report_room_is_true(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Charlie / Frank referring to Diana's body-find location must
+        also verify ``true`` — they were the other two spurious
+        spatial-hallucination claims in seed=1."""
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        for speaker_id, speaker_name in [
+            ("player_2", "Charlie"), ("player_5", "Frank"),
+        ]:
+            claim = {
+                "type": "location",
+                "subject": "Diana",
+                "room": "security",
+                "temporal": "around the report",
+                "_speaker_id": speaker_id, "_speaker_name": speaker_name,
+                "_meeting_idx": 0, "_meeting_tick": meeting_tick,
+            }
+            result = pipeline._verify_claim(claim, meeting_tick)
+            assert result.verdict == "true", (
+                f"{speaker_name}'s reference to Diana@security should "
+                f"verify true; got {result.verdict} ({result.reason})"
+            )
+
+    def test_no_false_positive_for_unvisited_room(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Guardrail: extending the window through ``meeting_tick``
+        must not turn an actually-false claim into ``true``. Diana
+        never visited weapons — that claim still verifies ``false``."""
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location",
+            "subject": "Diana",
+            "room": "weapons",
+            "temporal": "this round",
+            "_speaker_id": "player_3", "_speaker_name": "Diana",
+            "_meeting_idx": 0, "_meeting_tick": meeting_tick,
+        }
+        result = pipeline._verify_claim(claim, meeting_tick)
+        assert result.verdict == "false"
+
+    def test_most_time_denominator_unchanged(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Guardrail: ``most_time`` / ``entire_time`` claims must NOT
+        have their windows widened by ``meeting_tick``. The
+        occupancy-fraction denominator depends on the strict free-roam
+        segment end (= meeting_tick - 1)."""
+        from quack.evaluation.tier3_statement_verification import (
+            _resolve_window_for_claim,
+        )
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+
+        any_time_claim = {
+            "type": "location", "subject": "Diana", "room": "security",
+            "temporal": "this round",
+        }
+        _, e_any = _resolve_window_for_claim(
+            any_time_claim, meeting_tick, pipeline.timeline,
+        )
+        assert e_any == meeting_tick
+
+        most_time_claim = {
+            "type": "location", "subject": "Diana", "room": "security",
+            "temporal": "the whole time",
+        }
+        _, e_most = _resolve_window_for_claim(
+            most_time_claim, meeting_tick, pipeline.timeline,
+        )
+        assert e_most == meeting_tick - 1, (
+            "Bug G guardrail violated: most_time window extended to "
+            f"meeting tick (end={e_most}, expected {meeting_tick - 1})"
+        )
+
+    def test_other_claim_types_window_unchanged(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Guardrail: non-location/non-route claim types keep the
+        original pre-meeting window."""
+        from quack.evaluation.tier3_statement_verification import (
+            _resolve_window_for_claim,
+        )
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        for claim_type in ("sighting", "activity", "accusation", "defense"):
+            claim = {"type": claim_type, "temporal": "this round"}
+            _, end = _resolve_window_for_claim(
+                claim, meeting_tick, pipeline.timeline,
+            )
+            assert end == meeting_tick - 1, (
+                f"{claim_type} window must NOT include meeting_tick "
+                f"(got end={end})"
+            )
+
+    def test_route_claim_admits_meeting_tick(
+        self, simple_map: GameMap,
+    ) -> None:
+        """A ``route`` claim ending at the body-report room must
+        verify ``true``: the destination is reached on the meeting
+        tick, which the extended window now admits."""
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location",
+            "subject": "Diana",
+            "route": ["electrical", "security"],
+            "temporal": "this round",
+            "_speaker_id": "player_3", "_speaker_name": "Diana",
+            "_meeting_idx": 0, "_meeting_tick": meeting_tick,
+        }
+        result = pipeline._verify_claim(claim, meeting_tick)
+        assert result.verdict == "true", (
+            "Route ending at the body-report room should verify true; "
+            f"got {result.verdict} ({result.reason})"
+        )
+
+    def test_audit_window_matches_verifier_window(
+        self, simple_map: GameMap,
+    ) -> None:
+        """Bug E protection: the audit's ``temporal_window`` field
+        must reflect the same window the verifier used. Otherwise a
+        future drift in ``_build_audit_entry`` would resurface as a
+        Bug E consistency failure."""
+        pipeline, meeting_tick = self._build_pipeline(simple_map)
+        # any_time location: window should extend through 22.
+        claim = {
+            "type": "location", "subject": "Diana", "room": "security",
+            "temporal": "this round",
+            "_speaker_id": "player_3", "_speaker_name": "Diana",
+            "_meeting_idx": 0, "_meeting_tick": meeting_tick,
+        }
+        meeting = {"tick": meeting_tick, "type": "body_reported",
+                   "caller": "player_3"}
+        result = pipeline._verify_claim(claim, meeting_tick)
+        audit = pipeline._build_audit_entry(claim, meeting, 0, result)
+        assert audit["temporal_window"]["end_tick"] == meeting_tick

@@ -351,8 +351,21 @@ def _determine_round_range(
     meeting_tick: int,
     timeline: GameTimeline,
     temporal: str,
+    include_meeting_tick: bool = False,
 ) -> tuple[int, int]:
-    """Determine the tick range for claim verification based on temporal description."""
+    """Determine the tick range for claim verification.
+
+    The base window is the free-roam segment that *precedes* the meeting
+    (ending at ``meeting_tick - 1``). For presence-style location/route
+    claims, set ``include_meeting_tick=True`` to extend the right edge to
+    ``meeting_tick`` itself — this admits the body-reporter's arrival at
+    the body room on the report tick (Bug G).
+
+    ``include_meeting_tick`` must NOT be set for ``most_time`` /
+    ``entire_time`` semantics: those compute occupancy fractions over
+    the window and silently appending the report tick would shift the
+    denominator. See ``_resolve_window_for_claim``.
+    """
     boundaries = timeline.get_round_boundaries()
 
     # The free-roam segment that PRECEDES this meeting is the last
@@ -371,9 +384,62 @@ def _determine_round_range(
     if any(kw in temporal_lower for kw in ["start", "beginning", "spawn", "respawn"]):
         # First few ticks of the round
         round_end = min(round_start + 5, round_end)
-    # Default: use the full round
+    elif include_meeting_tick:
+        # Bug G: admit the reporter's arrival tick (the room they're
+        # standing in *at the meeting tick* is real and recorded in
+        # ``rooms_touched`` — but the free-roam segment ended one tick
+        # earlier, so without this extension a truthful "I found the
+        # body in security" gets scored ``false``).
+        round_end = max(round_end, meeting_tick)
 
     return round_start, round_end
+
+
+def _resolve_window_for_claim(
+    claim: dict[str, Any],
+    meeting_tick: int,
+    timeline: GameTimeline,
+) -> tuple[int, int]:
+    """Per-claim window resolution (Bug G).
+
+    Centralizes the decision of whether to extend the verification
+    window through ``meeting_tick`` itself so that ``_verify_claim`` and
+    ``_build_audit_entry`` always agree on the window (a previous
+    drift here would break the Bug E consistency assertion).
+
+    Policy:
+    - ``location`` / ``route`` claims under presence semantics
+      (``any_time`` / ``unknown_fallback``, or any claim carrying a
+      ``route`` list) extend through ``meeting_tick``. This admits the
+      report-tick arrival without changing any other behavior — under
+      presence semantics, adding one tick where the subject verifiably
+      stands can only flip a verdict from ``false`` to ``true``, never
+      create a false positive.
+    - ``most_time`` / ``entire_time`` location claims, and all other
+      claim types (sighting / activity / accusation / defense), keep
+      the original free-roam-segment window. This preserves the
+      occupancy-fraction denominators those semantics depend on.
+    """
+    temporal = claim.get("temporal", "this round")
+    claim_type = claim.get("type", "")
+
+    include_meeting_tick = False
+    if claim_type == "route":
+        include_meeting_tick = True
+    elif claim_type == "location":
+        if claim.get("route"):
+            include_meeting_tick = True
+        else:
+            ds = (
+                claim.get("duration_semantics")
+                or _infer_duration_semantics(temporal)
+            )
+            include_meeting_tick = ds in ("any_time", "unknown_fallback")
+
+    return _determine_round_range(
+        meeting_tick, timeline, temporal,
+        include_meeting_tick=include_meeting_tick,
+    )
 
 
 def verify_location_claim(
@@ -1485,7 +1551,13 @@ class StatementVerificationPipeline:
         """
         claim_type = claim.get("type", "")
         temporal = claim.get("temporal", "this round")
-        round_start, round_end = _determine_round_range(meeting_tick, self.timeline, temporal)
+        # Bug G: location/route presence claims admit the meeting tick
+        # itself so a reporter standing in the body room on the report
+        # tick is verifiable. Other claim types / stricter semantics use
+        # the original free-roam-segment boundary.
+        round_start, round_end = _resolve_window_for_claim(
+            claim, meeting_tick, self.timeline,
+        )
         resolution_source = self._temporal_resolution_source(meeting_tick)
 
         if claim_type == "location":
@@ -1791,8 +1863,12 @@ class StatementVerificationPipeline:
         """Assemble a single claim-level audit record."""
         speaker_id = claim.get("_speaker_id", "")
         temporal = claim.get("temporal", "this round")
-        round_start, round_end = _determine_round_range(
-            claim.get("_meeting_tick", 0), self.timeline, temporal,
+        # Bug G: use the same window-resolution logic the verifier used,
+        # so the audit's ``temporal_window`` field matches the window
+        # ``_verify_claim`` actually evaluated against. Drift between
+        # the two would break the Bug E consistency assertion.
+        round_start, round_end = _resolve_window_for_claim(
+            claim, claim.get("_meeting_tick", 0), self.timeline,
         )
 
         # Normalize entity IDs for the structured claim
