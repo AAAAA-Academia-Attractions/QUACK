@@ -161,11 +161,15 @@ class MapRenderer:
 
         Skip for spawn / post-meeting respawn and for partial free-roam ticks
         cut short by a meeting (no ``tick_end`` — phase already left FREE_ROAM).
+
+        ``GAME_OVER`` after a full free-roam tick (e.g. max ticks) still gets
+        the snapshot: the engine flips phase before ``run_game`` saves the
+        frame, but transit should match tick N+1 start like any other tick_end.
         """
         if phase_override in ("Spawn", "Respawn (post-meeting)"):
             return False
         from quack.engine.game_state import GamePhase
-        return state.phase == GamePhase.FREE_ROAM
+        return state.phase in (GamePhase.FREE_ROAM, GamePhase.GAME_OVER)
 
     def _visual_transit(self, player: Player) -> _VisualTransit | None:
         """Corridor placement for a player still ``is_in_transit``.

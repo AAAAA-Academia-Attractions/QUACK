@@ -200,6 +200,20 @@ def test_respawn_frame_does_not_advance_transit() -> None:
     assert frank.current_room == "storage"
 
 
+def test_max_ticks_game_over_still_uses_next_tick_snapshot() -> None:
+    """Last frame on max ticks: phase is GAME_OVER but tick_end completed."""
+    renderer = MapRenderer(_storage_medbay_map())
+    state = GameState(phase=GamePhase.GAME_OVER, current_tick=50)
+    state.max_ticks = 50
+    state.players["player_5"] = _frank_in_transit(remaining=1)
+
+    assert renderer._use_next_tick_snapshot(state, None)
+    snap = renderer._snapshot_next_tick_start(state)
+    frank = snap.players["player_5"]
+    assert not frank.is_in_transit
+    assert frank.current_room == "medbay"
+
+
 def test_partial_tick_meeting_interrupt_does_not_advance() -> None:
     renderer = MapRenderer(_storage_medbay_map())
     state = GameState(phase=GamePhase.DISCUSSION, current_tick=10)
