@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from quack.evaluation.game_reconstructor import GameReconstructor, GameTimeline, PlayerTickState
@@ -607,6 +609,125 @@ class TestAuditOutput:
 
         assert audit["temporal_window"]["start_tick"] == 7
         assert audit["temporal_window"]["end_tick"] == 16
+
+
+class TestAuditGroundTruthEvents:
+    """The audit must include the raw game.jsonl events the verdict was
+    compared against, so a reviewer can trace any classification back to
+    specific log lines without re-reading the whole game log."""
+
+    def _build_pipeline(self, simple_map: GameMap) -> tuple[Any, list[dict]]:
+        from quack.evaluation.tier3_statement_verification import StatementVerificationPipeline
+        events = build_minimal_game_events()
+        timeline = GameReconstructor(events, simple_map).reconstruct()
+        pipeline = StatementVerificationPipeline.__new__(StatementVerificationPipeline)
+        pipeline.timeline = timeline
+        pipeline.game_map = simple_map
+        pipeline.events = events
+        pipeline.name_to_id = {"Alice": "player_0", "Bob": "player_1",
+                                "Charlie": "player_2", "Diana": "player_3",
+                                "Eve": "player_4", "Frank": "player_5"}
+        pipeline.id_to_name = {v: k for k, v in pipeline.name_to_id.items()}
+        pipeline.role_map = {"player_0": "goose", "player_1": "goose",
+                             "player_2": "goose", "player_3": "goose",
+                             "player_4": "goose", "player_5": "duck"}
+        pipeline.duck_ids = {"player_5"}
+        return pipeline, events
+
+    def test_audit_has_ground_truth_events_field(self, simple_map: GameMap) -> None:
+        pipeline, _events = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location", "subject": "Alice", "room": "medbay",
+            "temporal": "this round",
+            "_speaker_id": "player_0", "_speaker_name": "Alice",
+            "_meeting_idx": 0, "_meeting_tick": 7,
+        }
+        meeting = {"tick": 7, "type": "body_reported", "caller": "player_0"}
+        result = pipeline._verify_claim(claim, 7)
+        audit = pipeline._build_audit_entry(claim, meeting, 0, result, "I was in medbay.")
+
+        assert "ground_truth_events" in audit
+        assert isinstance(audit["ground_truth_events"], list)
+
+    def test_ground_truth_events_are_within_temporal_window(self, simple_map: GameMap) -> None:
+        pipeline, _events = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location", "subject": "Alice", "room": "medbay",
+            "temporal": "this round",
+            "_speaker_id": "player_0", "_speaker_name": "Alice",
+            "_meeting_idx": 0, "_meeting_tick": 7,
+        }
+        meeting = {"tick": 7, "type": "body_reported", "caller": "player_0"}
+        result = pipeline._verify_claim(claim, 7)
+        audit = pipeline._build_audit_entry(claim, meeting, 0, result, "")
+
+        start, end = audit["temporal_window"]["start_tick"], audit["temporal_window"]["end_tick"]
+        for ev in audit["ground_truth_events"]:
+            tk = ev.get("tick", -1)
+            assert start <= tk <= end, (
+                f"event at tick {tk} outside window [{start}, {end}]: {ev}"
+            )
+
+    def test_ground_truth_events_involve_subject(self, simple_map: GameMap) -> None:
+        """Every cited event must reference the claim's subject (or target)."""
+        pipeline, _events = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location", "subject": "Alice", "room": "medbay",
+            "temporal": "this round",
+            "_speaker_id": "player_0", "_speaker_name": "Alice",
+            "_meeting_idx": 0, "_meeting_tick": 7,
+        }
+        meeting = {"tick": 7, "type": "body_reported", "caller": "player_0"}
+        result = pipeline._verify_claim(claim, 7)
+        audit = pipeline._build_audit_entry(claim, meeting, 0, result, "")
+
+        for ev in audit["ground_truth_events"]:
+            data = ev.get("data", {})
+            actor_keys = {
+                data.get("player_id"), data.get("killer_id"),
+                data.get("target_id"), data.get("caller"),
+                data.get("voter"), data.get("target"),
+            }
+            assert "player_0" in actor_keys, (
+                f"event does not reference Alice (player_0): {ev}"
+            )
+
+    def test_ground_truth_events_are_raw_log_entries(self, simple_map: GameMap) -> None:
+        """Cited events must be verbatim log entries (event_type + data + tick)."""
+        pipeline, _events = self._build_pipeline(simple_map)
+        claim = {
+            "type": "location", "subject": "Alice", "room": "medbay",
+            "temporal": "this round",
+            "_speaker_id": "player_0", "_speaker_name": "Alice",
+            "_meeting_idx": 0, "_meeting_tick": 7,
+        }
+        meeting = {"tick": 7, "type": "body_reported", "caller": "player_0"}
+        result = pipeline._verify_claim(claim, 7)
+        audit = pipeline._build_audit_entry(claim, meeting, 0, result, "")
+
+        # When the minimal fixture has any Alice events, they should pass through
+        # as the same dicts (not a transformed/summarized representation).
+        for ev in audit["ground_truth_events"]:
+            assert "event_type" in ev and "tick" in ev and "data" in ev
+
+    def test_filter_relevant_events_returns_empty_for_empty_actors(self, simple_map: GameMap) -> None:
+        """Without an actor set, the helper must return [] rather than every
+        event in the window (which would balloon every audit file)."""
+        pipeline, _events = self._build_pipeline(simple_map)
+        result = pipeline._filter_relevant_events(
+            actor_ids=set(), start_tick=0, end_tick=100,
+        )
+        assert result == []
+
+    def test_filter_relevant_events_respects_tick_window(self, simple_map: GameMap) -> None:
+        pipeline, events = self._build_pipeline(simple_map)
+        result = pipeline._filter_relevant_events(
+            actor_ids={"player_0", "player_1", "player_2", "player_3",
+                       "player_4", "player_5"},
+            start_tick=2, end_tick=4,
+        )
+        for ev in result:
+            assert 2 <= ev["tick"] <= 4
 
 
 class TestBackwardCompatibility:

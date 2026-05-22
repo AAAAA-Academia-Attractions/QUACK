@@ -853,3 +853,112 @@ Everything else in the agent — prompt building, vision images, retry policy, m
 - Model configs without a `provider:` field default to `"openai"`, so any third-party / private model configs that pre-date this change continue to work.
 - `max_tokens` is only forwarded when the model config sets it, so the existing Gemini-streaming requirement ("do NOT set `max_tokens`") is unaffected.
 - No on-disk log format changed; old `game.jsonl` files replay identically.
+
+## 2026-05-22 (Tier 3: Per-Claim Audit Log with Raw Engine Events)
+
+### Motivation
+
+`evaluation.json` keeps only the final aggregate Tier 3 metrics
+(`goose_truthfulness`, `duck_near_miss_claims`, `deception_sophistication`,
+…). For any specific verdict it produces, you couldn't tell **(a)** which
+claim was extracted, **(b)** which raw `game.jsonl` events it was compared
+against, or **(c)** why it landed in the bucket it did. Reviewers wanting
+to spot-check a `near_miss` verdict had to re-derive the ground truth by
+hand from the engine log.
+
+This change writes a per-claim audit log alongside `evaluation.json` so
+every aggregated number can be traced back to specific log lines.
+
+### What changed
+
+- **New file** `tier3_claims.jsonl` is written next to `evaluation.json`
+  whenever Tier 3 runs (one JSON object per claim, JSONL). Each entry
+  contains:
+  - `meeting` — meeting index / tick / type / caller
+  - `temporal_window` — `[start_tick, end_tick]` the verifier inspected,
+    plus how the window was resolved (`preceding_free_roam`,
+    `round_boundary_fallback`, `game_start_clamp`, …)
+  - `speaker` — speaker id / name / team (goose/duck) / alive_at_meeting
+  - `utterance` — the raw discussion message the LLM extracted from
+  - `structured_claim` — claim type / subject / target / room /
+    activity / temporal_ref / duration_semantics / confidence
+  - `verification` — final `verdict` (`true` / `false` / `near_miss` /
+    `wrong_room` / `unverifiable`), `verifier_name`, free-form `reason`,
+    and a derived `evidence` block (e.g. `match_rate`, `observed_rooms`,
+    `ticks_checked`)
+  - **`ground_truth_events`** — *new*. The raw event dicts copied
+    verbatim from `game.jsonl`, filtered to events that (i) fall inside
+    `temporal_window` and (ii) involve the claim's subject / target /
+    speaker. This is the "对照的 game engine log event" piece — you can
+    open `tier3_claims.jsonl`, find a claim, and see the exact log lines
+    the verdict was compared against without having to re-read the
+    whole `game.jsonl`.
+
+### Code changes
+
+- `quack/evaluation/tier3_statement_verification.py`:
+  - New `StatementVerificationPipeline._filter_relevant_events(actor_ids,
+    start_tick, end_tick, event_types=None, max_events=200)` helper.
+    Returns the raw `game.jsonl` events of relevant types
+    (`player_moved`, `player_killed`, `task_progress`, `task_completed`,
+    `body_reported`, `meeting_called`, `free_roam_chat`,
+    `player_ejected`, `players_respawned`) where any of the supplied
+    actor ids appears as `player_id` / `killer_id` / `target_id` /
+    `caller` / `voter` / `target`. Empty `actor_ids` returns `[]` so
+    audits don't balloon when entity resolution fails.
+  - `_build_audit_entry()` now collects `subject_id`, `target_id`,
+    and — for `accusation` / `defense` claims — the speaker, then attaches
+    the filtered raw events under a new top-level `ground_truth_events`
+    field on every audit record.
+- `quack/evaluation/evaluator.py`:
+  - `GameEvaluator.evaluate(..., save_tier3_audit=True)` — default flipped
+    from `False` to `True`. The audit file is free once you've paid for
+    the LLM calls, so it's now produced automatically with every Tier 3
+    run.
+  - `BatchEvaluator.evaluate_batch(..., save_tier3_audit=True)` — new
+    kwarg, forwarded to each per-game `evaluate()`.
+- `scripts/evaluate_game.py` and `scripts/evaluate_batch.py`:
+  - `--save-tier3-audit` is now the default behavior (kept as a no-op
+    alias for backwards compat).
+  - New `--no-tier3-audit` flag to opt out for users who only want the
+    aggregate metrics file.
+
+### Tests
+
+- New class `TestAuditGroundTruthEvents` in
+  `tests/test_evaluation/test_claim_verification.py` (6 tests) pins:
+  - Every audit entry has the `ground_truth_events` list field.
+  - All cited events fall inside the audit's declared `temporal_window`.
+  - Every cited event references the claim's subject (or target) in one
+    of the standard actor keys (`player_id` / `killer_id` / `target_id`
+    / `caller` / `voter` / `target`).
+  - Cited events are verbatim log entries (carry `event_type`, `tick`,
+    `data`), not summarized / transformed.
+  - `_filter_relevant_events` returns `[]` when given an empty actor set
+    (so audits don't balloon when entity resolution fails).
+  - `_filter_relevant_events` respects the tick window.
+
+### Validation
+
+- `python -m pytest tests/test_evaluation -q` → **98 passed** (was 92;
+  +6 new audit tests).
+- `python -m pytest tests/test_evaluation/test_claim_verification.py -q`
+  → **54 passed**.
+- Offline smoke test on a real game log
+  (`game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl`):
+  generated audit for a synthetic "Alice was in medbay" location claim →
+  verdict `false`, 26 raw `game.jsonl` events surfaced under
+  `ground_truth_events`, all involving Alice (`player_0`), all within the
+  declared window `[0, 21]`.
+
+### Backward compatibility
+
+- `evaluation.json` schema is unchanged; the new file is purely
+  additive.
+- `--save-tier3-audit` (the old opt-in flag) still works — it now just
+  matches the default. Existing scripts that explicitly pass it are
+  unaffected. Pass `--no-tier3-audit` to restore the pre-change
+  "metrics-only" behavior.
+- `EvaluationResult.tier3_audit_path` was already in `evaluator.py`
+  before this change; only the default of `save_tier3_audit` flipped,
+  so any code reading `result.tier3_audit_path` keeps working.

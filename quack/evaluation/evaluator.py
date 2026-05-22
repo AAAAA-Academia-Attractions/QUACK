@@ -92,7 +92,7 @@ class GameEvaluator:
         llm_api_key: str = "",
         llm_model: str = "gpt-5.5",
         llm_base_url: str = "",
-        save_tier3_audit: bool = False,
+        save_tier3_audit: bool = True,
     ) -> EvaluationResult:
         """Full evaluation of a single game log.
 
@@ -102,7 +102,13 @@ class GameEvaluator:
             llm_api_key: API key for the LLM (required if run_tier3=True).
             llm_model: Model identifier for claim extraction.
             llm_base_url: Base URL for the LLM API.
-            save_tier3_audit: If True, write tier3_claims.jsonl alongside evaluation.json.
+            save_tier3_audit: When ``run_tier3`` is True, also write
+                ``tier3_claims.jsonl`` (one JSON object per extracted claim:
+                utterance, parsed structured claim, derived evidence, verdict,
+                and the raw ``game.jsonl`` events the verdict was compared
+                against). Defaults to True because the audit file is cheap
+                to produce once the LLM calls have already happened. Pass
+                False to opt out.
 
         Returns:
             EvaluationResult with all requested tiers populated.
@@ -185,8 +191,14 @@ class BatchEvaluator:
         llm_api_key: str = "",
         llm_model: str = "gpt-5.5",
         llm_base_url: str = "",
+        save_tier3_audit: bool = True,
     ) -> BatchResult:
-        """Evaluate all .jsonl logs in a directory."""
+        """Evaluate all .jsonl logs in a directory.
+
+        ``save_tier3_audit`` is forwarded to each ``GameEvaluator.evaluate``
+        call so every game also produces a ``tier3_claims.jsonl`` audit file
+        alongside its ``evaluation.json``.
+        """
         log_files = sorted(Path(log_dir).glob("*.jsonl"))
         if not log_files:
             logger.warning("No .jsonl files found in %s", log_dir)
@@ -204,6 +216,7 @@ class BatchEvaluator:
                     llm_api_key=llm_api_key,
                     llm_model=llm_model,
                     llm_base_url=llm_base_url,
+                    save_tier3_audit=save_tier3_audit,
                 )
                 results.append(result)
             except Exception as e:

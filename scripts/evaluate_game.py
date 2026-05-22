@@ -61,11 +61,22 @@ def main() -> None:
         action="store_true",
         help="Enable verbose logging",
     )
+    # Per-claim Tier 3 audit (one JSON object per extracted claim, with the
+    # raw game.jsonl events the verdict was compared against) is written by
+    # default whenever --tier3 runs. Pass --no-tier3-audit to skip it.
+    parser.add_argument(
+        "--no-tier3-audit",
+        dest="save_tier3_audit",
+        action="store_false",
+        default=True,
+        help="Skip writing tier3_claims.jsonl (default: write it next to evaluation.json)",
+    )
     parser.add_argument(
         "--save-tier3-audit",
+        dest="save_tier3_audit",
         action="store_true",
-        default=False,
-        help="Write per-claim audit to tier3_claims.jsonl alongside evaluation.json",
+        default=True,
+        help="(default behavior) Write tier3_claims.jsonl next to evaluation.json",
     )
     args = parser.parse_args()
 

@@ -990,6 +990,74 @@ class StatementVerificationPipeline:
             return "game_start_clamp"
         return "unknown_fallback"
 
+    # Events that, when filtered by tick window and actor, tell the audit
+    # reader exactly which lines of ``game.jsonl`` the verifier compared a
+    # claim against. ``free_roam_chat`` is included because chat-based claims
+    # (e.g. "I said I was heading medbay") need the original utterance from
+    # the engine log to be auditable.
+    _RELEVANT_EVENT_TYPES: frozenset[str] = frozenset({
+        "player_moved",
+        "player_killed",
+        "task_progress",
+        "task_completed",
+        "body_reported",
+        "meeting_called",
+        "free_roam_chat",
+        "player_ejected",
+        "players_respawned",
+    })
+
+    def _filter_relevant_events(
+        self,
+        *,
+        actor_ids: set[str],
+        start_tick: int,
+        end_tick: int,
+        event_types: frozenset[str] | None = None,
+        max_events: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Pull raw ``game.jsonl`` events that the verifier compared against.
+
+        Filters ``self.events`` to those that (a) fall inside the verification
+        window ``[start_tick, end_tick]`` (inclusive), (b) involve at least
+        one actor in ``actor_ids`` (acting / target / victim / killer / caller),
+        and (c) are of a type that carries spatial-behavioral signal.
+
+        The returned list is the raw event dicts as they appear in the game
+        log, so each audit entry is self-explanatory: you can read the audit
+        and see exactly which ``game.jsonl`` lines drove the verdict. Empty
+        ``actor_ids`` returns ``[]`` to avoid swamping the audit with every
+        event in the window.
+        """
+        if not actor_ids:
+            return []
+        types = event_types if event_types is not None else self._RELEVANT_EVENT_TYPES
+        out: list[dict[str, Any]] = []
+        for ev in self.events:
+            if ev.get("event_type") not in types:
+                continue
+            tk = ev.get("tick", -1)
+            if tk < start_tick or tk > end_tick:
+                continue
+            data = ev.get("data") or {}
+            # Match if any actor in actor_ids appears in the event's data.
+            # Cover the various role-specific keys used across event types.
+            event_actors = {
+                _event_actor_id(ev),
+                data.get("player_id"),
+                data.get("killer_id"),
+                data.get("target_id"),
+                data.get("caller"),
+                data.get("voter"),
+                data.get("target"),
+            }
+            event_actors.discard(None)
+            if actor_ids & event_actors:
+                out.append(ev)
+                if len(out) >= max_events:
+                    break
+        return out
+
     def _build_audit_entry(
         self,
         claim: dict[str, Any],
@@ -1008,6 +1076,28 @@ class StatementVerificationPipeline:
         # Normalize entity IDs for the structured claim
         subject_id = self.name_to_id.get(claim.get("subject", ""))
         target_id = self.name_to_id.get(claim.get("target", ""))
+
+        # Collect the raw ``game.jsonl`` events the verdict was effectively
+        # compared against. The verifier's own ``evidence`` block contains
+        # the *derived* ground truth (e.g. ``observed_rooms``); pairing it
+        # with the raw events makes the audit entry self-contained so a
+        # human reviewer can trace any verdict back to specific log lines
+        # without needing to re-read the whole ``game.jsonl``.
+        relevant_actors: set[str] = set()
+        if subject_id:
+            relevant_actors.add(subject_id)
+        if target_id:
+            relevant_actors.add(target_id)
+        # Accusations are about the target; defenses are about the defended.
+        # In both cases the speaker is the source of accountability, so include
+        # them as an actor for the audit trace.
+        if claim.get("type") in ("accusation", "defense") and speaker_id:
+            relevant_actors.add(speaker_id)
+        ground_truth_events = self._filter_relevant_events(
+            actor_ids=relevant_actors,
+            start_tick=round_start,
+            end_tick=round_end,
+        )
 
         return {
             "meeting": {
@@ -1050,6 +1140,10 @@ class StatementVerificationPipeline:
                 "resolution_source": result.resolution_source or self._temporal_resolution_source(meeting["tick"]),
                 "evidence": result.evidence,
             },
+            # Raw events copied verbatim from ``game.jsonl`` (filtered to the
+            # claim's subject/target within the temporal window). Pair this
+            # with ``verification.evidence`` for a full picture.
+            "ground_truth_events": ground_truth_events,
         }
 
     def _check_duck_caught_after_meeting(self, meeting: dict[str, Any]) -> bool:
