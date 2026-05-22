@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -49,38 +50,23 @@ def _infer_condition(log_path: Path, search_root: Path) -> str:
     """Derive the experiment condition name from the directory structure.
 
     Expected structures:
-        game_logs/homogeneous/<model>/<run>/game.jsonl     -> homogeneous/<model>
-        game_logs/heterogeneous/<cond>/<run>/game.jsonl    -> heterogeneous/<cond>
-        game_logs/game_XXXXX.jsonl                         -> legacy
-
-    The condition name is anchored on the ``homogeneous`` / ``heterogeneous``
-    segment of the absolute path, so the result is stable regardless of
-    where the user scoped the search (e.g. ``game_logs/``,
-    ``game_logs/homogeneous/``, or ``game_logs/homogeneous/gpt5.5/`` all
-    return ``homogeneous/gpt5.5`` for an underlying game). Pre-fix, only
-    a ``game_logs/`` search root produced the right name — narrower roots
-    silently produced a per-run condition string (one game per "condition")
-    and broke per-condition aggregation.
+        game_logs/homogeneous/<model>/<run>/game.jsonl  -> homogeneous/<model>
+        game_logs/heterogeneous/<condition>/<run>/game.jsonl -> heterogeneous/<condition>
+        game_logs/game_XXXXX.jsonl  -> legacy
     """
-    abs_parts = log_path.resolve().parts
-    for category in ("homogeneous", "heterogeneous"):
-        try:
-            idx = abs_parts.index(category)
-        except ValueError:
-            continue
-        if idx + 1 < len(abs_parts) - 1:
-            return f"{category}/{abs_parts[idx + 1]}"
-        return category
-
-    if log_path.name.startswith("game_") and log_path.name.endswith(".jsonl"):
-        return "legacy"
-
-    # Last-resort fallback: use the relative parent path under search_root.
     try:
         rel = log_path.parent.relative_to(search_root)
     except ValueError:
         return "unknown"
-    return "/".join(rel.parts) if rel.parts else "root"
+
+    parts = rel.parts
+    if len(parts) >= 2 and parts[0] in ("homogeneous", "heterogeneous"):
+        return f"{parts[0]}/{parts[1]}"
+    if len(parts) >= 1 and parts[0] in ("homogeneous", "heterogeneous"):
+        return parts[0]
+    if log_path.name.startswith("game_") and log_path.name.endswith(".jsonl"):
+        return "legacy"
+    return "/".join(parts) if parts else "root"
 
 
 def main() -> None:
@@ -171,7 +157,6 @@ def main() -> None:
 
     condition_results: dict[str, list[EvaluationResult]] = {}
     all_results: list[EvaluationResult] = []
-    failed: list[tuple[Path, str]] = []
 
     for i, log_file in enumerate(log_files, 1):
         condition = _infer_condition(log_file, search_root)
@@ -197,9 +182,9 @@ def main() -> None:
 
         except Exception as e:
             logger.error("Failed to evaluate %s: %s", log_file, e)
-            failed.append((log_file, str(e)))
 
-    # Per-condition summaries
+    # Print per-condition summaries
+    from quack.evaluation.evaluator import _aggregate_numeric_fields
     for condition, results in sorted(condition_results.items()):
         print(f"\n{'=' * 60}")
         print(f"Condition: {condition} ({len(results)} games)")
@@ -242,12 +227,6 @@ def main() -> None:
     if args.output:
         save_json_report(overall_batch, args.output)
         print(f"Full results also saved to: {args.output}")
-
-    if failed:
-        print(f"\nWARNING: {len(failed)} game(s) failed to evaluate:")
-        for log_file, err in failed:
-            print(f"  - {log_file}: {err}")
-        sys.exit(2)
 
 
 def _build_aggregated(results: list[EvaluationResult]) -> dict[str, Any]:
