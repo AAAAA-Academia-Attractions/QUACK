@@ -7,26 +7,35 @@ Produces two views per agent per tick:
 
 from __future__ import annotations
 
+import os
+import platform
+from copy import copy
 from typing import TYPE_CHECKING, NamedTuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from quack.rendering.colors import (BACKGROUND_COLOR, BODY_FILL, CELL_SIZE,
                                      CORRIDOR_COLOR, CORRIDOR_COLOR_DIM,
                                      EMERGENCY_BORDER, EMERGENCY_FILL,
                                      FOG_BORDER, FOG_FILL, FOG_LABEL_COLOR,
-                                     GOD_EVENT_KILL_COLOR,
-                                     GOD_EVENT_MOVE_COLOR,
+                                     GOD_EVENT_KILL_COLOR, GOD_EVENT_MOVE_COLOR,
                                      GOD_EVENT_TASK_COLOR, GOD_PANEL_BG,
                                      GOD_PANEL_BORDER, GOD_ROLE_DUCK_COLOR,
-                                     GOD_ROLE_GOOSE_COLOR, HUD_BG, HUD_BORDER,
-                                     PADDING, PLAYER_COLORS, ROOM_BORDER,
+                                     GOD_ROLE_GOOSE_COLOR, GOD_SPRITE_SCALE,
+                                     GOD_VIEW_HUD_H, GOD_VIEW_PANEL_W,
+                                     GOD_VIEW_POV_LABEL_H, GOD_VIEW_SCALE,
+                                     HUD_BG, HUD_BORDER, LOCAL_VIEW_CROP_HALF,
+                                     LOCAL_VIEW_SCALE, LOCAL_VIEW_SPRITE_SCALE,
+                                     LOCAL_VIEW_TITLE_H, PADDING, PLAYER_COLORS, ROOM_BORDER,
                                      ROOM_BORDER_CURRENT, ROOM_FILL,
-                                     ROOM_FILL_CURRENT, TASK_COMPLETE_BORDER,
-                                     TASK_COMPLETE_FILL,
+                                     ROOM_FILL_CURRENT, ROOM_TITLE_BG,
+                                     DEAD_POV_TITLE_BG, DEAD_POV_TITLE_TEXT,
+                                     TASK_COMPLETE_BORDER, TASK_COMPLETE_FILL,
                                      TASK_INCOMPLETE_BORDER,
                                      TASK_INCOMPLETE_FILL, TEXT_DIM,
-                                     TEXT_LIGHT, TEXT_WHITE, VISION_HALO_ALPHA)
+                                     TEXT_LIGHT, TEXT_WHITE,
+                                     VISION_HALO_ALPHA, WEIGHT_BADGE_BORDER,
+                                     WEIGHT_BADGE_FILL)
 from quack.rendering.room_decor import draw_room_decoration, get_room_fill
 from quack.rendering.sprites import SpriteSheet
 
@@ -58,10 +67,21 @@ _DEJAVU_FONT_PATHS = [
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
 ]
 
+_WINDOWS_FONT_PATHS = [
+    os.path.expandvars(r"C:\Windows\Fonts\segoeuib.ttf"),
+    os.path.expandvars(r"C:\Windows\Fonts\segoeui.ttf"),
+    os.path.expandvars(r"C:\Windows\Fonts\arialbd.ttf"),
+    os.path.expandvars(r"C:\Windows\Fonts\arial.ttf"),
+    os.path.expandvars(r"C:\Windows\Fonts\msyh.ttc"),
+]
+
 
 def _try_load_font(size: int = 12, prefer_chinese: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Load a font. Tries Chinese-capable fonts first (for CJK speech rendering)."""
-    paths = (_CHINESE_FONT_PATHS if prefer_chinese else []) + _DEJAVU_FONT_PATHS
+    paths = list(_CHINESE_FONT_PATHS if prefer_chinese else [])
+    if platform.system() == "Windows":
+        paths.extend(_WINDOWS_FONT_PATHS)
+    paths.extend(_DEJAVU_FONT_PATHS)
     for p in paths:
         try:
             return ImageFont.truetype(p, size)
@@ -80,10 +100,14 @@ class MapRenderer:
         self.sprites = SpriteSheet()
         self.last_actions: dict[str, str] = {}
 
-        self._font_sm = _try_load_font(11)
-        self._font_md = _try_load_font(13)
-        self._font_lg = _try_load_font(16)
-        self._font_xl = _try_load_font(20)
+        self._font_xs = _try_load_font(11)
+        self._font_sm = _try_load_font(14)
+        self._font_md = _try_load_font(17)
+        self._font_lg = _try_load_font(22)
+        self._font_xl = _try_load_font(28)
+        self._font_room = _try_load_font(24)
+        self._font_weight = _try_load_font(28)
+        self._font_log = _try_load_font(15)
 
         xs = [r.x for r in game_map.rooms.values()]
         ys = [r.y for r in game_map.rooms.values()]
@@ -110,15 +134,45 @@ class MapRenderer:
     def _get_player_name(self, player_id: str) -> str:
         return self._player_names.get(player_id, player_id)
 
+    def _snapshot_next_tick_start(self, state: GameState) -> GameState:
+        """Render-only copy of *state* after one ``_advance_transit`` pass.
+
+        God-view frames are saved at tick *N* end; for visualization we show
+        what the map looks like at tick *N+1* start (before anyone acts).
+        """
+        snap = copy(state)
+        snap.players = {}
+        for pid, player in state.players.items():
+            p = copy(player)
+            if p.is_in_transit:
+                p.move_ticks_remaining -= 1
+                if p.move_ticks_remaining <= 0:
+                    p.current_room = p.moving_to
+                    p.moving_from = ""
+                    p.moving_to = ""
+                    p.move_ticks_remaining = 0
+            snap.players[pid] = p
+        return snap
+
+    def _use_next_tick_snapshot(
+        self, state: GameState, phase_override: str | None,
+    ) -> bool:
+        """Whether god-view should show tick N+1 start (one transit advance).
+
+        Skip for spawn / post-meeting respawn and for partial free-roam ticks
+        cut short by a meeting (no ``tick_end`` — phase already left FREE_ROAM).
+        """
+        if phase_override in ("Spawn", "Respawn (post-meeting)"):
+            return False
+        from quack.engine.game_state import GamePhase
+        return state.phase == GamePhase.FREE_ROAM
+
     def _visual_transit(self, player: Player) -> _VisualTransit | None:
-        """Map in-transit engine state to end-of-tick god-view placement.
+        """Corridor placement for a player still ``is_in_transit``.
 
-        God-view frames are captured after each tick completes.  Without changing
-        game logic, treat each such frame as one step along a weight-W corridor:
-
-            steps_done = weight - move_ticks_remaining + 1
-
-        When ``steps_done >= weight`` the player is drawn in ``moving_to``.
+        Expects the post-``_advance_transit`` room/remaining values used by
+        god-view rendering (see ``_snapshot_next_tick_start``).  Arrivals are
+        committed to ``current_room`` and return ``None`` here.
         """
         if not player.is_in_transit or not player.moving_to:
             return None
@@ -131,14 +185,8 @@ class MapRenderer:
             player.current_room, player.moving_to,
         )
         total = max(1, weight)
-        steps_done = min(total, total - player.move_ticks_remaining + 1)
-        if steps_done >= total:
-            return _VisualTransit(
-                on_corridor=False,
-                corridor_progress=1.0,
-                display_room=player.moving_to,
-            )
-        progress = steps_done / total
+        elapsed = total - player.move_ticks_remaining
+        progress = elapsed / total
         progress = max(0.25, min(0.75, progress))
         return _VisualTransit(
             on_corridor=True,
@@ -153,9 +201,7 @@ class MapRenderer:
         vt = self._visual_transit(player)
         if vt is None:
             return player.current_room
-        if vt.on_corridor:
-            return f"{player.current_room} → {player.moving_to}"
-        return vt.display_room
+        return f"{player.current_room} → {player.moving_to}"
 
     def _transit_corridor_xy(
         self, player: Player, scale: float, offset_y: int = 0,
@@ -219,6 +265,100 @@ class MapRenderer:
         w = int((self._max_x - self._min_x) * CELL_SIZE * scale + 2 * PADDING)
         h = int((self._max_y - self._min_y) * CELL_SIZE * scale + 2 * PADDING)
         return w, h
+
+    def _draw_room_title_bar(
+        self,
+        draw: ImageDraw.Draw,
+        rect: tuple[int, int, int, int],
+        title: str,
+        *,
+        highlight: bool = False,
+    ) -> None:
+        """Full-width title band at the top of a room (schematic style)."""
+        x1, y1, x2, y2 = rect
+        bar_h = max(26, int((x2 - x1) * 0.16))
+        inner = (x1 + 3, y1 + 3, x2 - 3, y1 + 3 + bar_h)
+        bg = (45, 75, 130) if highlight else ROOM_TITLE_BG
+        draw.rounded_rectangle(inner, radius=6, fill=bg)
+        draw.text(
+            ((x1 + x2) // 2, y1 + 3 + bar_h // 2),
+            title.replace("_", " ").upper(),
+            fill=TEXT_WHITE,
+            font=self._font_room,
+            anchor="mm",
+        )
+
+    def _draw_nameplate(
+        self,
+        draw: ImageDraw.Draw,
+        x: int,
+        y: int,
+        label: str,
+        color: tuple[int, int, int],
+        *,
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None,
+        accent: tuple[int, int, int] | None = None,
+    ) -> None:
+        """Color-coded name tag — easy to spot in god view and POV."""
+        font = font or self._font_md
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad_x, pad_y = (12, 6) if font is self._font_lg else (10, 5)
+        bx0 = x - tw // 2 - pad_x
+        by0 = y - th // 2 - pad_y
+        bx1 = x + tw // 2 + pad_x
+        by1 = y + th // 2 + pad_y
+        fill = accent or color
+        draw.rounded_rectangle(
+            (bx0, by0, bx1, by1), radius=5,
+            fill=fill, outline=TEXT_WHITE, width=1,
+        )
+        draw.text((x, y), label, fill=TEXT_WHITE, font=font, anchor="mm")
+
+    def _draw_weight_badge(
+        self,
+        draw: ImageDraw.Draw,
+        mx: int,
+        my: int,
+        weight: int,
+    ) -> None:
+        """Prominent corridor travel-time badge."""
+        label = str(weight)
+        bbox = draw.textbbox((0, 0), label, font=self._font_weight)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        r = max(28, max(tw, th) // 2 + 16)
+        draw.ellipse(
+            (mx - r, my - r, mx + r, my + r),
+            fill=WEIGHT_BADGE_FILL,
+            outline=WEIGHT_BADGE_BORDER,
+            width=3,
+        )
+        draw.text((mx, my), label, fill=TEXT_WHITE, font=self._font_weight, anchor="mm")
+
+    def _draw_agent_marker(
+        self,
+        img: Image.Image,
+        draw: ImageDraw.Draw,
+        pid: str,
+        x: int,
+        y: int,
+        *,
+        sprite_scale: int = GOD_SPRITE_SCALE,
+        variant: str | None = None,
+        name_override: str | None = None,
+        accent: tuple[int, int, int] | None = None,
+        name_font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None,
+    ) -> None:
+        """Small sprite + colored nameplate (shared by god view and local view)."""
+        self._paste_sprite(img, pid, x, y - 6, scale=sprite_scale, variant=variant)
+        label = name_override or self._get_player_name(pid)
+        plate_y = y + int(8 * sprite_scale + 4)
+        self._draw_nameplate(
+            draw, x, plate_y, label,
+            self._get_player_color(pid),
+            accent=accent,
+            font=name_font,
+        )
 
     # ================================================================
     #  GLOBAL MAP
@@ -318,11 +458,7 @@ class MapRenderer:
                 w = self.game_map.get_corridor_weight(room_name, neighbor)
                 if w > 1 and both_visible:
                     mx, my = (ca[0] + cb[0]) // 2, (ca[1] + cb[1]) // 2
-                    r = 10
-                    draw.ellipse((mx - r, my - r, mx + r, my + r),
-                                 fill=BACKGROUND_COLOR, outline=color)
-                    draw.text((mx, my), str(w), fill=TEXT_LIGHT,
-                              font=self._font_sm, anchor="mm")
+                    self._draw_weight_badge(draw, mx, my, w)
 
     # ---- Rooms ----
 
@@ -349,14 +485,10 @@ class MapRenderer:
             fill = ROOM_FILL_CURRENT if is_viewer else (theme_fill or ROOM_FILL)
             border = ROOM_BORDER_CURRENT if is_viewer else ROOM_BORDER
             border_w = 3 if is_viewer else 2
-            draw.rectangle(rect, fill=fill, outline=border, width=border_w)
-
+            draw.rounded_rectangle(rect, fill=fill, outline=border, width=border_w)
             draw_room_decoration(draw, room_name, rect, scale)
-
-            label = room_name.replace("_", " ")
-            draw.text(
-                (cx, rect[1] + 8), label, fill=TEXT_DIM, font=self._font_md, anchor="mt",
-            )
+            if is_revealed:
+                self._draw_room_title_bar(draw, rect, room_name, highlight=is_viewer)
 
             if room.is_emergency_button:
                 btn_y = rect[3] - 16
@@ -389,14 +521,14 @@ class MapRenderer:
             border = TASK_COMPLETE_BORDER if completed else TASK_INCOMPLETE_BORDER
             status_char = "V" if completed else "T"
 
-            icon_x = rect_offset[2] - 16
-            icon_y = rect_offset[1] + 14
-            r = 8
+            icon_x = rect_offset[2] - int(14 * scale)
+            icon_y = rect_offset[1] + int(12 * scale)
+            r = max(5, int(6 * scale))
             draw.rounded_rectangle(
                 (icon_x - r, icon_y - r, icon_x + r, icon_y + r),
-                radius=3, fill=fill, outline=border, width=1,
+                radius=2, fill=fill, outline=border, width=1,
             )
-            draw.text((icon_x, icon_y), status_char, fill=TEXT_WHITE, font=self._font_sm, anchor="mm")
+            draw.text((icon_x, icon_y), status_char, fill=TEXT_WHITE, font=self._font_xs, anchor="mm")
 
     # ---- Body markers ----
 
@@ -469,10 +601,10 @@ class MapRenderer:
             if pos is None:
                 continue
             px, py = pos
-            name = self._get_player_name(pid)
-            self._paste_sprite(img, pid, px, py, scale=2, variant="walk")
-            draw.text((px, py - 26), name[:8], fill=TEXT_WHITE,
-                      font=self._font_sm, anchor="mb")
+            self._draw_agent_marker(
+                img, draw, pid, px, py,
+                sprite_scale=GOD_SPRITE_SCALE, variant="walk",
+            )
 
     # ---- Viewer (YOU) marker ----
 
@@ -485,12 +617,11 @@ class MapRenderer:
         if viewer_player and viewer_player.is_in_transit:
             pos = self._transit_corridor_xy(viewer_player, scale, offset_y)
             if pos is not None:
-                cx, cy = pos
-                r = 22
-                draw.ellipse((cx - r, cy - r, cx + r, cy + r),
-                             outline=(255, 255, 255), width=2)
-                self._paste_sprite(img, viewer_id, cx, cy, scale=2, variant="walk")
-                draw.text((cx, cy - 28), "YOU", fill=TEXT_WHITE, font=self._font_md, anchor="mb")
+                self._draw_agent_marker(
+                    img, draw, viewer_id, pos[0], pos[1],
+                    sprite_scale=GOD_SPRITE_SCALE, variant="walk",
+                    name_override="YOU", accent=(45, 110, 210),
+                )
                 return
             vt = self._visual_transit(viewer_player)
             if vt is not None and not vt.on_corridor:
@@ -499,11 +630,11 @@ class MapRenderer:
                 if room:
                     cx, cy = self._room_center(room, scale)
                     cy += offset_y + 16
-                    r = 22
-                    draw.ellipse((cx - r, cy - r, cx + r, cy + r),
-                                 outline=(255, 255, 255), width=2)
-                    self._paste_sprite(img, viewer_id, cx, cy, scale=2, variant="walk")
-                    draw.text((cx, cy - 28), "YOU", fill=TEXT_WHITE, font=self._font_md, anchor="mb")
+                    self._draw_agent_marker(
+                        img, draw, viewer_id, cx, cy,
+                        sprite_scale=GOD_SPRITE_SCALE, variant="walk",
+                        name_override="YOU", accent=(45, 110, 210),
+                    )
                     return
 
         room = self.game_map.rooms.get(viewer_room)
@@ -511,12 +642,11 @@ class MapRenderer:
             return
         cx, cy = self._room_center(room, scale)
         cy += offset_y + 16
-
-        r = 22
-        draw.ellipse((cx - r, cy - r, cx + r, cy + r),
-                     outline=(255, 255, 255), width=2)
-        self._paste_sprite(img, viewer_id, cx, cy, scale=2)
-        draw.text((cx, cy - 28), "YOU", fill=TEXT_WHITE, font=self._font_md, anchor="mb")
+        self._draw_agent_marker(
+            img, draw, viewer_id, cx, cy,
+            sprite_scale=GOD_SPRITE_SCALE,
+            name_override="YOU", accent=(45, 110, 210),
+        )
 
     # ---- Legend ----
 
@@ -569,6 +699,10 @@ class MapRenderer:
     #  LOCAL VIEW
     # ================================================================
 
+    def _gray_local_view(self, img: Image.Image) -> Image.Image:
+        """Desaturate a local-view crop for dead players."""
+        return ImageOps.grayscale(img).convert("RGB")
+
     def render_local_view(
         self,
         state: GameState,
@@ -579,27 +713,23 @@ class MapRenderer:
         witnessed_events: list[dict] | None = None,
     ) -> Image.Image:
         """Render a zoomed view centered on the player's current room."""
-        scale = 2.0
+        scale = LOCAL_VIEW_SCALE
         w, h = self._canvas_size(scale)
         img = Image.new("RGB", (w, h), BACKGROUND_COLOR)
         draw = ImageDraw.Draw(img)
 
+        vt = self._visual_transit(player)
+        highlight_room = player.current_room
+
         self._draw_corridors_local(draw, scale, visible_rooms)
-        self._draw_rooms_local(draw, scale, state, visible_rooms, player.current_room)
+        self._draw_rooms_local(draw, scale, state, visible_rooms, highlight_room)
         self._draw_task_markers_local(draw, scale, state, visible_rooms)
         self._draw_body_markers_local(img, draw, scale, state, visible_bodies)
         self._draw_players_local(img, draw, scale, state, visible_players, player)
         self._draw_witness_arrows_local(draw, scale, player, witnessed_events or [])
         self._draw_viewer_local(img, draw, scale, player)
 
-        # Compute camera center: in a room it is the room center; in transit,
-        # it is a point along the corridor between current_room and moving_to,
-        # or the destination room when the end-of-tick visual step has arrived.
-        vt = self._visual_transit(player)
-        if vt is not None and not vt.on_corridor:
-            center_room = self.game_map.rooms[vt.display_room]
-            view_cx, view_cy = self._room_center(center_room, scale)
-        elif vt is not None and vt.on_corridor:
+        if vt is not None:
             pos = self._transit_corridor_xy(player, scale)
             if pos is not None:
                 view_cx, view_cy = pos
@@ -609,21 +739,26 @@ class MapRenderer:
         else:
             center_room = self.game_map.rooms[player.current_room]
             view_cx, view_cy = self._room_center(center_room, scale)
-        crop_half = 320
+        crop_half = LOCAL_VIEW_CROP_HALF
         left = max(0, view_cx - crop_half)
         top = max(0, view_cy - crop_half)
         right = min(w, view_cx + crop_half)
         bottom = min(h, view_cy + crop_half)
         cropped = img.crop((left, top, right, bottom))
+        if not player.is_alive:
+            cropped = self._gray_local_view(cropped)
 
-        title_h = 36
-        final = Image.new("RGB", (cropped.width, cropped.height + title_h), HUD_BG)
+        title_h = LOCAL_VIEW_TITLE_H
+        title_bg = DEAD_POV_TITLE_BG if not player.is_alive else HUD_BG
+        title_text = DEAD_POV_TITLE_TEXT if not player.is_alive else TEXT_WHITE
+        final = Image.new("RGB", (cropped.width, cropped.height + title_h), title_bg)
         final_draw = ImageDraw.Draw(final)
-        room_label = self._player_display_room(player).replace("_", " ").title()
+        room_label = self._player_display_room(player).replace("_", " ").upper()
+        final_draw.rectangle((0, 0, cropped.width, title_h), fill=title_bg, outline=HUD_BORDER)
         final_draw.text(
             (cropped.width // 2, title_h // 2),
-            f"Local View — {room_label}",
-            fill=TEXT_WHITE, font=self._font_lg, anchor="mm",
+            room_label,
+            fill=title_text, font=self._font_xl, anchor="mm",
         )
         final_draw.line((0, title_h - 1, cropped.width, title_h - 1), fill=HUD_BORDER)
         final.paste(cropped, (0, title_h))
@@ -655,11 +790,7 @@ class MapRenderer:
                 w = self.game_map.get_corridor_weight(room_name, neighbor)
                 if w > 1 and both:
                     mx, my = (ca[0] + cb[0]) // 2, (ca[1] + cb[1]) // 2
-                    r = int(12 * scale)
-                    draw.ellipse((mx - r, my - r, mx + r, my + r),
-                                 fill=BACKGROUND_COLOR, outline=color)
-                    draw.text((mx, my), str(w), fill=TEXT_LIGHT,
-                              font=self._font_md, anchor="mm")
+                    self._draw_weight_badge(draw, mx, my, w)
 
     def _draw_rooms_local(
         self, draw: ImageDraw.Draw, scale: float, state: GameState,
@@ -676,10 +807,9 @@ class MapRenderer:
             border = ROOM_BORDER_CURRENT if is_current else ROOM_BORDER
             border_w = 4 if is_current else 2
 
-            draw.rectangle(rect, fill=fill, outline=border, width=border_w)
+            draw.rounded_rectangle(rect, fill=fill, outline=border, width=border_w)
+            self._draw_room_title_bar(draw, rect, room_name, highlight=is_current)
             draw_room_decoration(draw, room_name, rect, scale)
-            label = room_name.replace("_", " ")
-            draw.text((cx, rect[1] + 10), label, fill=TEXT_DIM, font=self._font_lg, anchor="mt")
 
             if room.is_emergency_button:
                 btn_y = rect[3] - 22
@@ -708,18 +838,18 @@ class MapRenderer:
             border = TASK_COMPLETE_BORDER if completed else TASK_INCOMPLETE_BORDER
             status_char = "V" if completed else "T"
 
-            icon_x = rect[2] - 22
-            icon_y = rect[1] + 18
-            r = 10
+            icon_x = rect[2] - 18
+            icon_y = rect[1] + 14
+            r = 7
             draw.rounded_rectangle(
                 (icon_x - r, icon_y - r, icon_x + r, icon_y + r),
-                radius=4, fill=fill, outline=border, width=2,
+                radius=2, fill=fill, outline=border, width=1,
             )
-            draw.text((icon_x, icon_y), status_char, fill=TEXT_WHITE, font=self._font_md, anchor="mm")
+            draw.text((icon_x, icon_y), status_char, fill=TEXT_WHITE, font=self._font_xs, anchor="mm")
 
             draw.text(
-                (icon_x - r - 4, icon_y), task_name[:16],
-                fill=fill, font=self._font_sm, anchor="rm",
+                (icon_x - r - 3, icon_y), task_name[:12],
+                fill=fill, font=self._font_xs, anchor="rm",
             )
 
     def _draw_body_markers_local(
@@ -738,20 +868,24 @@ class MapRenderer:
             for i, bid in enumerate(body_ids):
                 bx = cx - 28 + i * 50
                 by = cy + 30
-                self._paste_sprite(img, bid, bx, by, scale=3, variant="dead")
+                self._paste_sprite(img, bid, bx, by, scale=LOCAL_VIEW_SPRITE_SCALE, variant="dead")
 
                 body_name = self._get_player_name(bid)
-                draw.text((bx, by + 28), body_name, fill=BODY_FILL,
-                          font=self._font_md, anchor="mt")
+                self._draw_nameplate(draw, bx, by + int(10 * LOCAL_VIEW_SPRITE_SCALE), body_name, BODY_FILL)
 
     def _draw_players_local(
         self, img: Image.Image, draw: ImageDraw.Draw, scale: float, state: GameState,
         visible_ids: list[str], viewer: Player,
     ) -> None:
+        ss = LOCAL_VIEW_SPRITE_SCALE
         viewer_vt = self._visual_transit(viewer)
         viewer_on_corridor = viewer_vt is not None and viewer_vt.on_corridor
 
-        # Viewer traveling on a corridor: draw other visible players similarly.
+        def _draw_other(pid: str, px: int, py: int, variant: str | None = None) -> None:
+            self._draw_agent_marker(
+                img, draw, pid, px, py, sprite_scale=ss, variant=variant,
+            )
+
         if viewer_on_corridor:
             for pid in visible_ids:
                 p = state.players.get(pid)
@@ -759,24 +893,16 @@ class MapRenderer:
                     continue
                 pos = self._transit_corridor_xy(p, scale)
                 if pos is not None:
-                    px, py = pos
-                    name = self._get_player_name(pid)
-                    self._paste_sprite(img, pid, px, py, scale=3)
-                    draw.text((px, py - 40), name, fill=TEXT_WHITE,
-                              font=self._font_md, anchor="mb")
+                    _draw_other(pid, pos[0], pos[1])
                     continue
                 p_vt = self._visual_transit(p)
                 if p_vt is not None and not p_vt.on_corridor:
                     room = self.game_map.rooms.get(p_vt.display_room)
                     if room:
                         cx, cy = self._room_center(room, scale)
-                        name = self._get_player_name(pid)
-                        self._paste_sprite(img, pid, cx, cy, scale=3)
-                        draw.text((cx, cy - 40), name, fill=TEXT_WHITE,
-                                  font=self._font_md, anchor="mb")
+                        _draw_other(pid, cx, cy)
             return
 
-        # Viewer is in a room (or visually arrived): group others by display room.
         room_players: dict[str, list[str]] = {}
         corridor_ids: list[str] = []
         for pid in visible_ids:
@@ -791,15 +917,9 @@ class MapRenderer:
                 room_players.setdefault(display, []).append(pid)
 
         for pid in corridor_ids:
-            p = state.players[pid]
-            pos = self._transit_corridor_xy(p, scale)
-            if pos is None:
-                continue
-            px, py = pos
-            name = self._get_player_name(pid)
-            self._paste_sprite(img, pid, px, py, scale=3, variant="walk")
-            draw.text((px, py - 40), name, fill=TEXT_WHITE,
-                      font=self._font_md, anchor="mb")
+            pos = self._transit_corridor_xy(state.players[pid], scale)
+            if pos is not None:
+                _draw_other(pid, pos[0], pos[1], variant="walk")
 
         viewer_display = (
             viewer_vt.display_room if viewer_vt is not None else viewer.current_room
@@ -807,19 +927,13 @@ class MapRenderer:
         for room_name, pids in room_players.items():
             room = self.game_map.rooms[room_name]
             cx, cy = self._room_center(room, scale)
-
             viewer_here = viewer_display == room_name
-            base_y = cy - 30 if viewer_here else cy
-            spacing = 56
+            base_y = cy - 20 if viewer_here else cy + 12
+            spacing = max(72, int(18 * ss))
             n = len(pids)
             start_x = cx - (n - 1) * spacing // 2
             for i, pid in enumerate(pids):
-                px = start_x + i * spacing
-                py = base_y
-                name = self._get_player_name(pid)
-                self._paste_sprite(img, pid, px, py, scale=3)
-                draw.text((px, py - 40), name, fill=TEXT_WHITE,
-                          font=self._font_md, anchor="mb")
+                _draw_other(pid, start_x + i * spacing, base_y)
 
     def _draw_witness_arrows_local(
         self,
@@ -931,14 +1045,22 @@ class MapRenderer:
             cx, cy = self._room_center(room, scale)
             cy += 24
 
-        # Highlight ring
-        r = 30
+        r = int(14 + 6 * LOCAL_VIEW_SPRITE_SCALE)
+        if not player.is_alive:
+            self._paste_sprite(
+                img, player.player_id, cx, cy,
+                scale=LOCAL_VIEW_SPRITE_SCALE, variant="dead",
+            )
+            return
+
         draw.ellipse((cx - r, cy - r, cx + r, cy + r),
                      outline=(255, 255, 255), width=3)
-
-        self._paste_sprite(img, player.player_id, cx, cy, scale=3)
-        draw.text((cx, cy - 42), "YOU", fill=TEXT_WHITE,
-                  font=self._font_lg, anchor="mb")
+        self._draw_agent_marker(
+            img, draw, player.player_id, cx, cy,
+            sprite_scale=LOCAL_VIEW_SPRITE_SCALE,
+            name_override="YOU",
+            accent=(45, 110, 210),
+        )
 
     # ================================================================
     #  GOD VIEW — omniscient observer view
@@ -955,25 +1077,32 @@ class MapRenderer:
     ) -> Image.Image:
         """Render a god-view: all players, vision halos, roles, actions, event log,
         plus a grid of per-player local views at the bottom."""
-        scale = 1.2
+        scale = GOD_VIEW_SCALE
         map_w, map_h = self._canvas_size(scale)
 
-        panel_w = 360
-        hud_h = 56
+        panel_w = GOD_VIEW_PANEL_W
+        hud_h = GOD_VIEW_HUD_H
         top_w = map_w + panel_w
         top_h = hud_h + map_h
 
-        # Build per-player local views
-        all_players = list(state.players.values())
+        # Complete free-roam tick ends visualize tick N+1 start; partial ticks
+        # (meeting interrupt) and post-meeting respawns use raw engine state.
+        if self._use_next_tick_snapshot(state, phase_override):
+            display_state = self._snapshot_next_tick_start(state)
+        else:
+            display_state = state
+
+        # Build per-player local views from the display snapshot.
+        all_players = list(display_state.players.values())
         local_views: list[tuple[str, Image.Image]] = []
         for p in all_players:
             if hasattr(vision_system, "compute_visibility"):
-                vis = vision_system.compute_visibility(p, state)
+                vis = vision_system.compute_visibility(p, display_state)
                 witnessed: list[dict] = []
                 if hasattr(vision_system, "get_witnessed_movements"):
-                    witnessed = vision_system.get_witnessed_movements(p, state)
+                    witnessed = vision_system.get_witnessed_movements(p, display_state)
                 local_img = self.render_local_view(
-                    state=state,
+                    state=display_state,
                     player=p,
                     visible_rooms=vis.visible_rooms,
                     visible_players=vis.visible_players,
@@ -982,7 +1111,7 @@ class MapRenderer:
                 )
             else:
                 local_img = self.render_local_view(
-                    state=state,
+                    state=display_state,
                     player=p,
                     visible_rooms={p.current_room},
                     visible_players=[],
@@ -1002,10 +1131,10 @@ class MapRenderer:
         else:
             thumb_h = 240
 
-        label_h = 28
+        label_h = GOD_VIEW_POV_LABEL_H
         grid_h = rows * (thumb_h + label_h) + 10
 
-        separator_h = 36
+        separator_h = 40
         total_h = top_h + separator_h + grid_h
 
         img = Image.new("RGBA", (top_w, total_h), (*BACKGROUND_COLOR, 255))
@@ -1031,17 +1160,18 @@ class MapRenderer:
         )
         if frame_idx is not None:
             hud_left = (
-                f"GOD VIEW  |  Frame {frame_idx:04d}  |  Tick: {tick}  |  "
-                f"Phase: {phase_label}"
+                f"GOD VIEW   Frame {frame_idx:04d}   Tick {tick}   {phase_label}"
             )
         else:
-            hud_left = f"GOD VIEW  |  Tick: {tick}  |  Phase: {phase_label}"
-        draw.text((16, 16), hud_left, fill=TEXT_WHITE, font=self._font_xl)
+            hud_left = f"GOD VIEW   Tick {tick}   {phase_label}"
+        draw.text((20, hud_h // 2), hud_left, fill=TEXT_WHITE, font=self._font_xl, anchor="lm")
 
-        hud_right = f"Tasks: {completed}/{total_tasks}  |  Alive: {len(state.alive_players)}/{len(state.players)}"
-        bbox = draw.textbbox((0, 0), hud_right, font=self._font_md)
-        draw.text((top_w - (bbox[2] - bbox[0]) - 16, 20), hud_right,
-                  fill=TEXT_LIGHT, font=self._font_md)
+        hud_right = f"Tasks {completed}/{total_tasks}   Alive {len(state.alive_players)}/{len(state.players)}"
+        bbox = draw.textbbox((0, 0), hud_right, font=self._font_lg)
+        draw.text(
+            (top_w - (bbox[2] - bbox[0]) - 20, hud_h // 2),
+            hud_right, fill=TEXT_LIGHT, font=self._font_lg, anchor="lm",
+        )
 
         map_y = hud_h
 
@@ -1050,17 +1180,17 @@ class MapRenderer:
         self._god_draw_corridors(draw, scale, all_rooms, map_y)
 
         # Draw rooms (all visible)
-        self._god_draw_rooms(draw, scale, state, map_y)
+        self._god_draw_rooms(draw, scale, display_state, map_y)
 
         # Draw vision halos
-        self._god_draw_vision_halos(img, scale, state, vision_system, map_y)
+        self._god_draw_vision_halos(img, scale, display_state, vision_system, map_y)
 
         # Draw task markers
-        self._draw_task_markers(draw, scale, state, all_rooms, map_y)
+        self._draw_task_markers(draw, scale, display_state, all_rooms, map_y)
 
         # Draw bodies
         all_body_ids = [b.player_id for b in state.bodies]
-        self._draw_body_markers(img, draw, scale, state, all_body_ids, map_y)
+        self._draw_body_markers(img, draw, scale, display_state, all_body_ids, map_y)
 
         # Build per-player chat map for this tick (free-roam chat)
         chat_by_player: dict[str, str] = {}
@@ -1070,18 +1200,20 @@ class MapRenderer:
                     chat_by_player[msg["player_id"]] = msg.get("message", "")
 
         # Draw all players with role labels and any chat bubbles
-        self._god_draw_all_players(img, draw, scale, state, map_y, chat_by_player)
+        self._god_draw_all_players(img, draw, scale, display_state, map_y, chat_by_player)
 
         # Right panel: player list + event log
-        self._god_draw_panel(draw, map_w, 0, panel_w, top_h, state, event_log)
+        self._god_draw_panel(draw, map_w, 0, panel_w, top_h, display_state, event_log)
 
         # Separator between god map and local views
         sep_y = top_h
         draw.rectangle((0, sep_y, top_w, sep_y + separator_h),
                         fill=(*HUD_BG, 255))
-        draw.text((top_w // 2, sep_y + separator_h // 2),
-                  "PLAYER POV (First-Person Views)",
-                  fill=(100, 200, 255, 255), font=self._font_xl, anchor="mm")
+        draw.text(
+            (top_w // 2, sep_y + separator_h // 2),
+            "Player POV",
+            fill=(130, 190, 255), font=self._font_lg, anchor="mm",
+        )
 
         # Draw local views in 2-column grid
         grid_start_y = sep_y + separator_h
@@ -1092,23 +1224,23 @@ class MapRenderer:
             y = grid_start_y + row * (thumb_h + label_h)
 
             # Resize local view to thumbnail
-            thumb = local_img.resize((thumb_w, thumb_h), Image.LANCZOS)
+            thumb = local_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
             if thumb.mode == "RGBA":
                 img.paste(thumb, (x, y + label_h), thumb)
             else:
                 img.paste(thumb, (x, y + label_h))
 
             # Player label above each thumbnail
-            player = state.players.get(pid)
+            player = display_state.players.get(pid)
             if player:
                 color = self._get_player_color(pid)
                 status = "DEAD" if not player.is_alive else self._player_display_room(player)
-                role_tag = f" [{player.role_name}]"
-                label = f"{player.name}{role_tag} — {status}"
-                draw.rectangle((x, y, x + thumb_w, y + label_h),
-                                fill=(*HUD_BG, 255))
-                draw.text((x + thumb_w // 2, y + label_h // 2), label,
-                          fill=(*color, 255), font=self._font_md, anchor="mm")
+                label = f"{player.name}  ·  {status.replace('_', ' ')}"
+                draw.rectangle((x, y, x + thumb_w, y + label_h), fill=(*HUD_BG, 255))
+                draw.text(
+                    (x + thumb_w // 2, y + label_h // 2), label,
+                    fill=(*color, 255), font=self._font_lg, anchor="mm",
+                )
 
             # Border
             draw.rectangle((x, y, x + thumb_w - 1, y + thumb_h + label_h - 1),
@@ -1132,16 +1264,12 @@ class MapRenderer:
                 cb = self._room_center(room_b, scale)
                 ca = (ca[0], ca[1] + offset_y)
                 cb = (cb[0], cb[1] + offset_y)
-                draw.line([ca, cb], fill=CORRIDOR_COLOR, width=max(2, int(5 * scale)))
+                draw.line([ca, cb], fill=CORRIDOR_COLOR, width=max(3, int(7 * scale)))
 
                 w = self.game_map.get_corridor_weight(room_name, neighbor)
                 if w > 1:
                     mx, my = (ca[0] + cb[0]) // 2, (ca[1] + cb[1]) // 2
-                    r = int(11 * scale)
-                    draw.ellipse((mx - r, my - r, mx + r, my + r),
-                                 fill=(*BACKGROUND_COLOR, 255), outline=CORRIDOR_COLOR)
-                    draw.text((mx, my), str(w), fill=TEXT_LIGHT,
-                              font=self._font_sm, anchor="mm")
+                    self._draw_weight_badge(draw, mx, my, w)
 
     def _god_draw_rooms(
         self, draw: ImageDraw.Draw, scale: float, state: GameState, offset_y: int,
@@ -1154,17 +1282,17 @@ class MapRenderer:
 
             theme_fill = get_room_fill(room_name)
             fill = theme_fill or ROOM_FILL
-            draw.rectangle(rect, fill=(*fill, 255), outline=(*ROOM_BORDER, 255), width=2)
+            draw.rounded_rectangle(rect, radius=int(10 * scale), fill=(*fill, 255),
+                                   outline=(*ROOM_BORDER, 255), width=2)
+            self._draw_room_title_bar(draw, rect, room_name)
             draw_room_decoration(draw, room_name, rect, scale)
-            label = room_name.replace("_", " ")
-            draw.text((cx, rect[1] + 8), label, fill=TEXT_DIM, font=self._font_md, anchor="mt")
 
             if room.is_emergency_button:
-                btn_y = rect[3] - 16
-                r = 7
+                btn_y = rect[3] - int(18 * scale)
+                r = int(9 * scale)
                 draw.ellipse((cx - r, btn_y - r, cx + r, btn_y + r),
                              fill=(*EMERGENCY_FILL, 255), outline=(*EMERGENCY_BORDER, 255), width=2)
-                draw.text((cx, btn_y), "!", fill=TEXT_WHITE, font=self._font_sm, anchor="mm")
+                draw.text((cx, btn_y), "!", fill=TEXT_WHITE, font=self._font_md, anchor="mm")
 
     def _god_draw_vision_halos(
         self, img: Image.Image, scale: float, state: GameState,
@@ -1209,30 +1337,24 @@ class MapRenderer:
         state: GameState, offset_y: int,
         chat_by_player: dict[str, str] | None = None,
     ) -> None:
-        """Draw all players (alive and dead) with role labels, action annotations,
-        and optional chat bubbles for players who spoke this tick."""
-        from quack.engine.game_state import Team
-
-        # Stationary alive players (including visually arrived in-transit)
+        """Draw all players (alive and dead) with action annotations and chat bubbles."""
+        # Stationary alive players (arrived or never moved)
         room_alive: dict[str, list[str]] = {}
         for p in state.alive_players:
-            vt = self._visual_transit(p)
-            if vt is None:
+            if self._visual_transit(p) is None:
                 room_alive.setdefault(p.current_room, []).append(p.player_id)
-            elif not vt.on_corridor:
-                room_alive.setdefault(vt.display_room, []).append(p.player_id)
 
         for room_name, pids in room_alive.items():
             room = self.game_map.rooms[room_name]
             cx, cy = self._room_center(room, scale)
             cy += offset_y
 
-            spacing = int(46 * scale)
+            spacing = int(58 * scale)
             n = len(pids)
             start_x = cx - (n - 1) * spacing // 2
             for i, pid in enumerate(pids):
                 px = start_x + i * spacing
-                py = cy + 4
+                py = cy + int(12 * scale)
                 self._god_draw_single_player(
                     img, draw, px, py, pid, state, scale, chat_by_player,
                 )
@@ -1243,76 +1365,49 @@ class MapRenderer:
             if pos is None:
                 continue
             px, py = pos
-
-            sprite_scale = max(2, int(2 * scale))
-            self._paste_sprite(img, p.player_id, px, py, scale=sprite_scale, variant="walk")
-
-            name = self._get_player_name(p.player_id)
-            player = state.players[p.player_id]
-            role_color = GOD_ROLE_DUCK_COLOR if player.team == Team.DUCK else GOD_ROLE_GOOSE_COLOR
-            draw.text((px, py - int(26 * scale)), name,
-                      fill=TEXT_WHITE, font=self._font_sm, anchor="mb")
-            draw.text((px, py + int(26 * scale)), player.role_name,
-                      fill=role_color, font=self._font_sm, anchor="mt")
+            self._draw_agent_marker(
+                img, draw, p.player_id, px, py,
+                sprite_scale=GOD_SPRITE_SCALE, variant="walk",
+                name_font=self._font_lg,
+            )
 
     def _god_draw_single_player(
         self, img: Image.Image, draw: ImageDraw.Draw,
         px: int, py: int, pid: str, state: GameState, scale: float,
         chat_by_player: dict[str, str] | None = None,
     ) -> None:
-        from quack.engine.game_state import Team
-
-        sprite_scale = max(2, int(2 * scale))
-        self._paste_sprite(img, pid, px, py, scale=sprite_scale)
-
-        name = self._get_player_name(pid)
-        player = state.players[pid]
-
-        draw.text((px, py - int(26 * scale)), name,
-                  fill=TEXT_WHITE, font=self._font_sm, anchor="mb")
-
-        role_color = GOD_ROLE_DUCK_COLOR if player.team == Team.DUCK else GOD_ROLE_GOOSE_COLOR
-        draw.text((px, py + int(26 * scale)), player.role_name,
-                  fill=role_color, font=self._font_sm, anchor="mt")
+        variant = self._get_sprite_variant(pid, state.players[pid].is_alive)
+        self._draw_agent_marker(
+            img, draw, pid, px, py,
+            sprite_scale=GOD_SPRITE_SCALE, variant=variant,
+            name_font=self._font_lg,
+        )
 
         action = self.last_actions.get(pid, "")
-        label_y = py + int(38 * scale)
         if action:
-            action_short = action[:20]
+            action_short = action[:22]
             acolor = GOD_EVENT_MOVE_COLOR
             if "kill" in action:
                 acolor = GOD_EVENT_KILL_COLOR
             elif "task" in action:
                 acolor = GOD_EVENT_TASK_COLOR
-            draw.text((px, label_y), action_short,
-                      fill=acolor, font=self._font_sm, anchor="mt")
-            label_y += int(16 * scale)
+            label_y = py + int(22 * GOD_SPRITE_SCALE)
+            draw.text((px, label_y), action_short, fill=acolor, font=self._font_sm, anchor="mt")
 
-        # Optional chat bubble (truncate for readability)
         if chat_by_player and pid in chat_by_player:
             msg = chat_by_player[pid]
-            msg_short = (msg[:26] + "…") if len(msg) > 26 else msg
-            bubble_pad_x = int(4 * scale)
-            bubble_pad_y = int(2 * scale)
+            msg_short = (msg[:28] + "…") if len(msg) > 28 else msg
+            chat_y = py + int(36 * GOD_SPRITE_SCALE)
             bbox = draw.textbbox((0, 0), msg_short, font=self._font_sm)
-            bw = bbox[2] - bbox[0] + 2 * bubble_pad_x
-            bh = bbox[3] - bbox[1] + 2 * bubble_pad_y
+            bw = bbox[2] - bbox[0] + 12
+            bh = bbox[3] - bbox[1] + 8
             bx = px - bw // 2
-            by = label_y - bh // 2
+            by = chat_y - bh // 2
             draw.rounded_rectangle(
-                (bx, by, bx + bw, by + bh),
-                radius=int(6 * scale),
-                fill=(20, 30, 40),
-                outline=GOD_PANEL_BORDER,
-                width=1,
+                (bx, by, bx + bw, by + bh), radius=6,
+                fill=(28, 36, 50), outline=GOD_PANEL_BORDER, width=1,
             )
-            draw.text(
-                (px, label_y),
-                msg_short,
-                fill=TEXT_LIGHT,
-                font=self._font_sm,
-                anchor="mm",
-            )
+            draw.text((px, chat_y), msg_short, fill=TEXT_LIGHT, font=self._font_sm, anchor="mm")
 
     def _god_draw_panel(
         self, draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
@@ -1324,46 +1419,41 @@ class MapRenderer:
         draw.rectangle((x, y, x + w, h), fill=(*GOD_PANEL_BG, 255))
         draw.line((x, y, x, h), fill=(*GOD_PANEL_BORDER, 255), width=2)
 
-        # Player roster
-        draw.text((x + 14, y + 14), "Players", fill=TEXT_WHITE, font=self._font_lg)
-        draw.line((x + 14, y + 36, x + w - 14, y + 36), fill=(*GOD_PANEL_BORDER, 255))
+        draw.text((x + 16, y + 16), "Players", fill=TEXT_WHITE, font=self._font_lg)
+        draw.line((x + 16, y + 44, x + w - 16, y + 44), fill=(*GOD_PANEL_BORDER, 255))
 
-        roster_y = y + 44
+        roster_y = y + 54
+        row_h = 28
         for pid, player in state.players.items():
             color = self._get_player_color(pid)
             name = self._get_player_name(pid)
             role_color = GOD_ROLE_DUCK_COLOR if player.team == Team.DUCK else GOD_ROLE_GOOSE_COLOR
 
-            # Color dot
-            r = 6
-            dot_x = x + 20
+            r = 7
+            dot_x = x + 24
             draw.ellipse((dot_x - r, roster_y - r, dot_x + r, roster_y + r),
                          fill=color, outline=TEXT_WHITE, width=1)
 
-            # Name + role
-            status = ""
-            if not player.is_alive:
-                status = " [DEAD]"
-            label = f"{name} ({player.role_name}){status}"
+            status = " [DEAD]" if not player.is_alive else ""
+            label = f"{name}{status}"
             draw.text((dot_x + r + 8, roster_y), label,
                       fill=role_color if player.is_alive else TEXT_DIM,
-                      font=self._font_sm, anchor="lm")
+                      font=self._font_md, anchor="lm")
 
-            # Room
             room_label = self._player_display_room(player).replace("_", " ")
-            draw.text((x + w - 14, roster_y), room_label,
-                      fill=TEXT_DIM, font=self._font_sm, anchor="rm")
+            draw.text((x + w - 16, roster_y), room_label,
+                      fill=TEXT_LIGHT, font=self._font_md, anchor="rm")
 
-            roster_y += 24
+            roster_y += row_h
 
-        # Event log section
-        log_y = roster_y + 16
-        draw.text((x + 14, log_y), "Event Log", fill=TEXT_WHITE, font=self._font_lg)
-        draw.line((x + 14, log_y + 22, x + w - 14, log_y + 22), fill=(*GOD_PANEL_BORDER, 255))
-        log_y += 30
+        log_y = roster_y + 18
+        draw.text((x + 16, log_y), "Event Log", fill=TEXT_WHITE, font=self._font_lg)
+        draw.line((x + 16, log_y + 30, x + w - 16, log_y + 30), fill=(*GOD_PANEL_BORDER, 255))
+        log_y += 40
 
         if event_log:
-            max_lines = max(1, (h - log_y - 10) // 18)
+            line_h = 24
+            max_lines = max(1, (h - log_y - 12) // line_h)
             visible_events = event_log[-max_lines:]
             for line in visible_events:
                 ecolor = TEXT_LIGHT
@@ -1376,11 +1466,11 @@ class MapRenderer:
                 elif "eject" in line.lower():
                     ecolor = (200, 130, 255)
 
-                display = line[:48]
-                draw.text((x + 14, log_y), display, fill=ecolor, font=self._font_sm)
-                log_y += 18
+                display = line[:52]
+                draw.text((x + 16, log_y), display, fill=ecolor, font=self._font_log)
+                log_y += line_h
         else:
-            draw.text((x + 14, log_y), "No events yet", fill=TEXT_DIM, font=self._font_sm)
+            draw.text((x + 16, log_y), "No events yet", fill=TEXT_DIM, font=self._font_md)
 
     # ================================================================
     #  MEETING FRAMES — for god-view meeting sequence

@@ -49,6 +49,11 @@ _STAR = (220, 230, 255)
 _COMPASS = (200, 180, 100)
 
 
+def _w(scale: float, mult: float = 1.0) -> int:
+    """Integer stroke width for Pillow when decor scale is fractional."""
+    return max(1, int(round(scale * mult)))
+
+
 def get_room_fill(room_name: str) -> tuple[int, int, int] | None:
     """Return themed fill color for a room, or None for default."""
     return ROOM_THEME_FILLS.get(room_name)
@@ -60,16 +65,23 @@ def draw_room_decoration(
     rect: tuple[int, int, int, int],
     scale: float = 1.0,
 ) -> None:
-    """Draw thematic interior decorations for a room."""
+    """Draw thematic interior decorations sized to the room interior."""
     x1, y1, x2, y2 = rect
-    w = x2 - x1
-    h = y2 - y1
-    cx = (x1 + x2) // 2
-    cy = (y1 + y2) // 2
+    w, h = x2 - x1, y2 - y1
+    # Keep props below the room title band and inside a small margin.
+    title_band = max(28, int(h * 0.17))
+    margin = max(6, int(min(w, h) * 0.06))
+    ix1, iy1 = x1 + margin, y1 + title_band
+    ix2, iy2 = x2 - margin, y2 - margin
+    iw, ih = max(1, ix2 - ix1), max(1, iy2 - iy1)
+    cx, cy = (ix1 + ix2) // 2, (iy1 + iy2) // 2
+    # Scale props to ~25–35% of room interior (old cap at 1.05 left tiny furniture).
+    inner = min(iw, ih)
+    decor_scale = max(0.55, min(2.8, inner / 115.0))
 
     fn = _DECORATORS.get(room_name)
     if fn:
-        fn(draw, x1, y1, w, h, cx, cy, scale)
+        fn(draw, ix1, iy1, iw, ih, cx, cy, decor_scale)
 
 
 def _draw_cafeteria(
@@ -77,31 +89,34 @@ def _draw_cafeteria(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Tables with plates, benches."""
-    s = max(1, int(scale))
+    tw, th = max(32, w // 4), max(14, h // 10)
 
     # Two tables
     for tx_offset in (-w // 4, w // 4):
         tx = cx + tx_offset
-        ty = cy + h // 6
+        ty = cy + h // 8
 
         # Table top
-        tw, th = int(26 * s), int(10 * s)
         draw.rectangle((tx - tw // 2, ty - th // 2, tx + tw // 2, ty + th // 2),
                         fill=_TABLE_TOP, outline=_TABLE)
         # Legs
+        leg_w = max(2, tw // 14)
+        leg_h = max(8, th)
         for lx in (tx - tw // 3, tx + tw // 3):
-            draw.rectangle((lx - s, ty + th // 2, lx + s, ty + th // 2 + 5 * s),
+            draw.rectangle((lx - leg_w, ty + th // 2, lx + leg_w, ty + th // 2 + leg_h),
                             fill=_TABLE)
         # Plates
-        for px in (tx - 6 * s, tx + 6 * s):
-            r = 3 * s
-            draw.ellipse((px - r, ty - r - 1, px + r, ty + r - 1), fill=_PLATE, outline=_TABLE)
+        plate_r = max(4, tw // 10)
+        for px in (tx - tw // 5, tx + tw // 5):
+            draw.ellipse((px - plate_r, ty - plate_r, px + plate_r, ty + plate_r),
+                         fill=_PLATE, outline=_TABLE)
 
         # Chairs/benches
-        for bx_off in (-8 * s, 8 * s):
+        chair = max(6, tw // 8)
+        for bx_off in (-tw // 3, tw // 3):
             bx = tx + bx_off
-            by = ty - th // 2 - 4 * s
-            draw.rectangle((bx - 3 * s, by, bx + 3 * s, by + 3 * s), fill=_CHAIR)
+            by = ty - th // 2 - chair
+            draw.rectangle((bx - chair // 2, by, bx + chair // 2, by + chair), fill=_CHAIR)
 
 
 def _draw_medbay(
@@ -109,7 +124,7 @@ def _draw_medbay(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Hospital beds, red cross."""
-    s = max(1, int(scale))
+    s = scale
 
     # Two beds
     for bx_offset in (-w // 4, w // 4):
@@ -141,7 +156,7 @@ def _draw_electrical(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Electrical panels with wires and LEDs."""
-    s = max(1, int(scale))
+    s = scale
 
     # Panel boxes along bottom
     for i, px_off in enumerate((-w // 3, 0, w // 3)):
@@ -165,7 +180,7 @@ def _draw_electrical(
         wy_start = cy - h // 3
         wy_end = cy - h // 8
         draw.line([(wx, wy_start), (wx + 3 * s, (wy_start + wy_end) // 2),
-                    (wx - 2 * s, wy_end)], fill=wc, width=max(1, s))
+                    (wx - 2 * s, wy_end)], fill=wc, width=_w(s))
 
 
 def _draw_engine_room(
@@ -173,12 +188,12 @@ def _draw_engine_room(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Gears, pipes, machinery."""
-    s = max(1, int(scale))
+    s = scale
 
     # Central gear
     gr = int(10 * s)
     draw.ellipse((cx - gr, cy - gr + h // 8, cx + gr, cy + gr + h // 8),
-                  fill=_GEAR_INNER, outline=_GEAR_OUTER, width=max(1, 2 * s))
+                  fill=_GEAR_INNER, outline=_GEAR_OUTER, width=_w(s, 2))
     # Inner circle
     gir = gr // 2
     draw.ellipse((cx - gir, cy - gir + h // 8, cx + gir, cy + gir + h // 8),
@@ -204,13 +219,13 @@ def _draw_navigation(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Navigation screens, star map, compass."""
-    s = max(1, int(scale))
+    s = scale
 
     # Main screen
     sw, sh = int(30 * s), int(18 * s)
     screen_y = cy + h // 10
     draw.rectangle((cx - sw // 2, screen_y - sh // 2, cx + sw // 2, screen_y + sh // 2),
-                    fill=_SCREEN_BG, outline=_SCREEN_BORDER, width=max(1, s))
+                    fill=_SCREEN_BG, outline=_SCREEN_BORDER, width=_w(s))
 
     # Stars on screen
     import random as _rng
@@ -226,12 +241,12 @@ def _draw_navigation(
     comp_y = cy - h // 5
     cr = int(6 * s)
     draw.ellipse((comp_x - cr, comp_y - cr, comp_x + cr, comp_y + cr),
-                  outline=_COMPASS, width=max(1, s))
+                  outline=_COMPASS, width=_w(s))
     # N arrow
     draw.line([(comp_x, comp_y), (comp_x, comp_y - cr + s)],
-              fill=_CROSS, width=max(1, s))
+              fill=_CROSS, width=_w(s))
     draw.line([(comp_x, comp_y), (comp_x, comp_y + cr - s)],
-              fill=_SCREEN_BORDER, width=max(1, s))
+              fill=_SCREEN_BORDER, width=_w(s))
 
 
 def _draw_weapons(
@@ -239,18 +254,18 @@ def _draw_weapons(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Targeting reticle and weapon rack."""
-    s = max(1, int(scale))
+    s = scale
 
     # Targeting reticle
     tr = int(12 * s)
     draw.ellipse((cx - tr, cy - tr + h // 8, cx + tr, cy + tr + h // 8),
-                  outline=(200, 60, 60), width=max(1, s))
+                  outline=(200, 60, 60), width=_w(s))
     draw.ellipse((cx - tr // 2, cy - tr // 2 + h // 8, cx + tr // 2, cy + tr // 2 + h // 8),
-                  outline=(200, 60, 60), width=max(1, s))
+                  outline=(200, 60, 60), width=_w(s))
     draw.line([(cx - tr - 3 * s, cy + h // 8), (cx + tr + 3 * s, cy + h // 8)],
-              fill=(200, 60, 60), width=max(1, s))
+              fill=(200, 60, 60), width=_w(s))
     draw.line([(cx, cy - tr - 3 * s + h // 8), (cx, cy + tr + 3 * s + h // 8)],
-              fill=(200, 60, 60), width=max(1, s))
+              fill=(200, 60, 60), width=_w(s))
 
     # Weapon rack on the side
     rack_x = cx - w // 3
@@ -262,7 +277,7 @@ def _draw_weapons(
     for i in range(3):
         iy = rack_y + 3 * s + i * 6 * s
         draw.line([(rack_x - rw // 3, iy), (rack_x + rw // 3, iy)],
-                  fill=_GEAR_OUTER, width=max(1, s))
+                  fill=_GEAR_OUTER, width=_w(s))
 
 
 def _draw_oxygen(
@@ -270,7 +285,7 @@ def _draw_oxygen(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """O2 tanks and filter system."""
-    s = max(1, int(scale))
+    s = scale
 
     # O2 tanks
     for tx_off in (-w // 4, 0, w // 4):
@@ -296,7 +311,7 @@ def _draw_security(
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
     """Security camera monitors."""
-    s = max(1, int(scale))
+    s = scale
 
     # Camera monitor grid (2x2)
     for row in range(2):
@@ -305,7 +320,7 @@ def _draw_security(
             my = cy + (row - 1) * int(12 * s) + int(6 * s) + h // 10
             mw, mh = int(12 * s), int(8 * s)
             draw.rectangle((mx - mw // 2, my - mh // 2, mx + mw // 2, my + mh // 2),
-                            fill=_SCREEN_BG, outline=_SCREEN_BORDER, width=max(1, s))
+                            fill=_SCREEN_BG, outline=_SCREEN_BORDER, width=_w(s))
             # Static-like dots
             import random as _rng
             rng = _rng.Random(42 + row * 2 + col)
@@ -326,33 +341,68 @@ def _draw_security(
     draw.ellipse((cx - 2 * s, cam_y - s, cx, cam_y + s), fill=_LED_RED)
 
 
+def _draw_crate(
+    draw: ImageDraw.Draw,
+    bx: int,
+    by: int,
+    cw: int,
+    ch: int,
+    stroke: int,
+) -> None:
+    """Single cargo crate centered at (bx, by)."""
+    _CRATE = (160, 130, 90)
+    _CRATE_DARK = (130, 105, 70)
+    _CRATE_STRIPE = (180, 150, 100)
+    draw.rectangle(
+        (bx - cw // 2, by - ch // 2, bx + cw // 2, by + ch // 2),
+        fill=_CRATE, outline=_CRATE_DARK, width=max(1, stroke),
+    )
+    draw.line(
+        [(bx - cw // 2, by), (bx + cw // 2, by)],
+        fill=_CRATE_STRIPE, width=max(1, stroke),
+    )
+    draw.line(
+        [(bx, by - ch // 2), (bx, by + ch // 2)],
+        fill=_CRATE_STRIPE, width=max(1, stroke),
+    )
+
+
 def _draw_storage(
     draw: ImageDraw.Draw,
     x: int, y: int, w: int, h: int, cx: int, cy: int, scale: float,
 ) -> None:
-    """Cargo boxes and crates."""
-    s = max(1, int(scale))
-    _CRATE = (160, 130, 90)
-    _CRATE_DARK = (130, 105, 70)
-    _CRATE_STRIPE = (180, 150, 100)
+    """Cargo warehouse: back shelf row + side stacks, center aisle kept clear."""
+    stroke = _w(scale)
+    gap = max(8, w // 24)
 
-    crate_positions = [
-        (-w // 4, h // 8, 14, 12),
-        (w // 6, h // 6, 12, 10),
-        (-w // 6, -h // 8, 10, 10),
-        (w // 4, -h // 10, 8, 8),
-    ]
-    for ox, oy, cw_base, ch_base in crate_positions:
-        bx = cx + ox
-        by = cy + oy
-        cw = int(cw_base * s)
-        ch = int(ch_base * s)
-        draw.rectangle((bx - cw // 2, by - ch // 2, bx + cw // 2, by + ch // 2),
-                        fill=_CRATE, outline=_CRATE_DARK)
-        draw.line([(bx - cw // 2, by), (bx + cw // 2, by)],
-                  fill=_CRATE_STRIPE, width=max(1, s))
-        draw.line([(bx, by - ch // 2), (bx, by + ch // 2)],
-                  fill=_CRATE_STRIPE, width=max(1, s))
+    # Back wall row — three equal crates
+    back_y = y + max(20, h // 5)
+    back_cw, back_ch = max(28, w // 6), max(22, h // 6)
+    back_span = 3 * back_cw + 2 * gap
+    back_left = cx - back_span // 2 + back_cw // 2
+    for i in range(3):
+        bx = back_left + i * (back_cw + gap)
+        _draw_crate(draw, bx, back_y, back_cw, back_ch, stroke)
+
+    # Left stack — two crates vertically
+    side_cw, side_ch = max(32, w // 5), max(26, h // 5)
+    left_x = x + max(16, w // 8)
+    stack_gap = max(6, gap // 2)
+    upper_y = cy - side_ch // 2 - stack_gap // 2
+    lower_y = cy + side_ch // 2 + stack_gap // 2
+    _draw_crate(draw, left_x, upper_y, side_cw, side_ch, stroke)
+    _draw_crate(draw, left_x, lower_y, side_cw, side_ch, stroke)
+
+    # Right side — one large pallet + one small on top (offset stack)
+    right_x = x + w - max(16, w // 8)
+    big_cw, big_ch = max(36, w // 4), max(28, h // 4)
+    small_cw, small_ch = max(26, w // 7), max(20, h // 7)
+    base_y = cy + h // 10
+    _draw_crate(draw, right_x, base_y, big_cw, big_ch, stroke)
+    _draw_crate(
+        draw, right_x - big_cw // 4, base_y - big_ch // 2 - small_ch // 2 - gap // 2,
+        small_cw, small_ch, stroke,
+    )
 
 
 _DECORATORS: dict[str, callable] = {
