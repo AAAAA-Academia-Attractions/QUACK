@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from quack.evaluation.game_reconstructor import GameReconstructor, GameTimeline
+from quack.evaluation.game_reconstructor import GameReconstructor
 from quack.evaluation.log_parser import get_game_config, parse_log
 from quack.evaluation.tier1_game_metrics import Tier1Metrics, compute_tier1_metrics
 from quack.evaluation.tier2_behavioral import Tier2Metrics, compute_tier2_metrics
@@ -92,7 +92,7 @@ class GameEvaluator:
         llm_api_key: str = "",
         llm_model: str = "gpt-5.5",
         llm_base_url: str = "",
-        save_tier3_audit: bool = False,
+        save_tier3_audit: bool = True,
     ) -> EvaluationResult:
         """Full evaluation of a single game log.
 
@@ -102,7 +102,13 @@ class GameEvaluator:
             llm_api_key: API key for the LLM (required if run_tier3=True).
             llm_model: Model identifier for claim extraction.
             llm_base_url: Base URL for the LLM API.
-            save_tier3_audit: If True, write tier3_claims.jsonl alongside evaluation.json.
+            save_tier3_audit: When ``run_tier3`` is True, also write
+                ``tier3_claims.jsonl`` (one JSON object per extracted claim:
+                utterance, parsed structured claim, derived evidence, verdict,
+                and the raw ``game.jsonl`` events the verdict was compared
+                against). Defaults to True because the audit file is cheap
+                to produce once the LLM calls have already happened. Pass
+                False to opt out.
 
         Returns:
             EvaluationResult with all requested tiers populated.
@@ -142,6 +148,11 @@ class GameEvaluator:
                 logger.warning("Tier 3 requested but no LLM API key provided; skipping")
             else:
                 logger.info("Running Tier 3 statement verification...")
+                # Bug C: persist the extraction cache next to the game
+                # log so two runs over the same game.jsonl produce
+                # byte-identical extraction (and therefore byte-identical
+                # tier3_claims.jsonl + evaluation.json).
+                cache_path = Path(log_path).parent / "tier3_extraction_cache.jsonl"
                 pipeline = StatementVerificationPipeline(
                     events=events,
                     timeline=timeline,
@@ -149,10 +160,14 @@ class GameEvaluator:
                     api_key=llm_api_key,
                     model=llm_model,
                     base_url=llm_base_url,
+                    cache_path=cache_path,
                 )
                 tier3 = pipeline.run()
 
-                # Write claim-level audit if requested
+                # Write claim-level audit if requested. The pipeline already
+                # cross-checks (Bug E) that the audit list and the metrics
+                # agree before we get here, so the JSONL we write IS the
+                # source the metrics were computed from.
                 if save_tier3_audit and pipeline.claim_audits:
                     audit_dir = Path(log_path).parent
                     audit_path = audit_dir / "tier3_claims.jsonl"
@@ -185,8 +200,14 @@ class BatchEvaluator:
         llm_api_key: str = "",
         llm_model: str = "gpt-5.5",
         llm_base_url: str = "",
+        save_tier3_audit: bool = True,
     ) -> BatchResult:
-        """Evaluate all .jsonl logs in a directory."""
+        """Evaluate all .jsonl logs in a directory.
+
+        ``save_tier3_audit`` is forwarded to each ``GameEvaluator.evaluate``
+        call so every game also produces a ``tier3_claims.jsonl`` audit file
+        alongside its ``evaluation.json``.
+        """
         log_files = sorted(Path(log_dir).glob("*.jsonl"))
         if not log_files:
             logger.warning("No .jsonl files found in %s", log_dir)
@@ -204,6 +225,7 @@ class BatchEvaluator:
                     llm_api_key=llm_api_key,
                     llm_model=llm_model,
                     llm_base_url=llm_base_url,
+                    save_tier3_audit=save_tier3_audit,
                 )
                 results.append(result)
             except Exception as e:
@@ -221,7 +243,6 @@ class BatchEvaluator:
         if not results:
             return {}
 
-        import statistics
 
         agg: dict[str, Any] = {}
 
