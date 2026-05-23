@@ -7,9 +7,12 @@ from typing import Any
 
 from quack.evaluation.game_reconstructor import GameReconstructor, GameTimeline, PlayerTickState
 from quack.evaluation.tier3_statement_verification import (
+    Tier3Metrics,
+    StatementVerificationPipeline,
     _determine_round_range,
     _infer_duration_semantics,
     can_see,
+    is_verifiable_verdict,
     normalize_room_name,
     verify_activity_claim,
     verify_location_claim,
@@ -2153,3 +2156,163 @@ class TestBugISightingDeathBoundary:
         ev = result.evidence or {}
         assert ev.get("speaker_is_killer_of_target") is False
         assert 12 in ev.get("dead_target_ticks_at_claimed_room", [])
+
+
+class TestIsVerifiableVerdict:
+    """Unit tests for the shared is_verifiable_verdict() helper."""
+
+    def test_verifiable_verdicts(self) -> None:
+        assert is_verifiable_verdict("true")
+        assert is_verifiable_verdict("false")
+        assert is_verifiable_verdict("near_miss")
+        assert is_verifiable_verdict("wrong_room")
+
+    def test_unverifiable_verdicts(self) -> None:
+        assert not is_verifiable_verdict("unverifiable")
+        assert not is_verifiable_verdict("unknown")
+        assert not is_verifiable_verdict("")
+        assert not is_verifiable_verdict("some_random_string")
+
+
+class TestMetricsVerifiableClaimsConsistency:
+    """Regression tests for the verifiable_claims counting bug fix.
+
+    The bug: ``_compute_metrics`` incremented ``metrics.verifiable_claims``
+    for EVERY claim whose type was in ``{location, sighting, activity}``,
+    regardless of verdict. But the audit consistency checker correctly
+    excluded ``unverifiable`` verdicts. This caused an off-by-one whenever
+    a verifiable-type claim received an ``unverifiable`` verdict.
+
+    Fix: use the shared ``is_verifiable_verdict()`` helper in all code
+    paths so the two counts never diverge.
+    """
+
+    def _make_pipeline(self, simple_map: GameMap) -> StatementVerificationPipeline:
+        """Build a minimal pipeline with no discussion messages."""
+        events = build_minimal_game_events(
+            include_meeting=False, include_kill=False, include_tasks=False,
+        )
+        timeline = GameReconstructor(events, simple_map).reconstruct()
+        return StatementVerificationPipeline(
+            events=events, timeline=timeline, game_map=simple_map,
+            api_key="",
+        )
+
+    def test_verifiable_claims_excludes_unverifiable(self, simple_map: GameMap) -> None:
+        """Claims with verifiable type but unverifiable verdict must NOT
+        increment ``metrics.verifiable_claims``."""
+        pipeline = self._make_pipeline(simple_map)
+        all_claims = [
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "true"},
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "false"},
+            {"type": "sighting", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "wrong_room"},
+            {"type": "activity", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "near_miss"},
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "unverifiable"},
+            {"type": "sighting", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "unverifiable"},
+        ]
+        metrics = Tier3Metrics()
+        pipeline._compute_metrics(metrics, all_claims, {}, {})
+        assert metrics.total_claims == 6
+        assert metrics.verifiable_claims == 4  # 2 unverifiable excluded
+
+    def test_verifiable_equals_goose_plus_duck(self, simple_map: GameMap) -> None:
+        """``metrics.verifiable_claims`` must equal the sum of
+        per-team verifiable counts (no leakage)."""
+        pipeline = self._make_pipeline(simple_map)
+        all_claims = [
+            # Goose claims — 4 verifiable
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "true"},
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "false"},
+            {"type": "sighting", "_speaker_id": "player_1", "_speaker_name": "Bob", "_verdict": "wrong_room"},
+            {"type": "activity", "_speaker_id": "player_2", "_speaker_name": "Charlie", "_verdict": "near_miss"},
+            # Duck claim — 1 verifiable
+            {"type": "activity", "_speaker_id": "player_5", "_speaker_name": "Frank", "_verdict": "false"},
+            # Unverifiable — should NOT count
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "unverifiable"},
+        ]
+        metrics = Tier3Metrics()
+        pipeline._compute_metrics(metrics, all_claims, {}, {})
+        assert metrics.verifiable_claims == 5
+        assert metrics.goose_total_verifiable == 4
+        assert metrics.duck_total_verifiable == 1
+        assert metrics.verifiable_claims == metrics.goose_total_verifiable + metrics.duck_total_verifiable
+
+    def test_accusation_and_defense_excluded(self, simple_map: GameMap) -> None:
+        """Accusation and defense claims must never count toward
+        ``verifiable_claims``."""
+        pipeline = self._make_pipeline(simple_map)
+        all_claims = [
+            {"type": "accusation", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "true"},
+            {"type": "defense", "_speaker_id": "player_0", "_speaker_name": "Alice", "_verdict": "unverifiable"},
+            {"type": "location", "_speaker_id": "player_1", "_speaker_name": "Bob", "_verdict": "true"},
+        ]
+        metrics = Tier3Metrics()
+        pipeline._compute_metrics(metrics, all_claims, {}, {})
+        assert metrics.total_claims == 3
+        assert metrics.verifiable_claims == 1  # only the location claim
+
+    def test_audit_consistency_check_passes(self, simple_map: GameMap) -> None:
+        """``_assert_audit_metrics_consistent`` must pass when metrics
+        and audits agree (no exception, no warning)."""
+        pipeline = self._make_pipeline(simple_map)
+        all_claims = [
+            {"type": "location", "_speaker_id": "player_0", "_speaker_name": "Alice",
+             "_verdict": "true", "_meeting_idx": 0, "_meeting_tick": 7,
+             "subject": "Alice", "temporal": "this round"},
+            {"type": "activity", "_speaker_id": "player_1", "_speaker_name": "Bob",
+             "_verdict": "near_miss", "_meeting_idx": 0, "_meeting_tick": 7,
+             "subject": "Bob", "activity": "waiting", "temporal": "this round"},
+            {"type": "sighting", "_speaker_id": "player_2", "_speaker_name": "Charlie",
+             "_verdict": "unverifiable", "_meeting_idx": 0, "_meeting_tick": 7,
+             "subject": "Charlie", "target": "Diana", "room": "cafeteria", "temporal": ""},
+        ]
+        metrics = Tier3Metrics()
+        pipeline._compute_metrics(metrics, all_claims, {}, {})
+        assert metrics.verifiable_claims == 2  # location true + activity near_miss
+
+        # Build matching audit entries
+        pipeline.claim_audits = [
+            {
+                "meeting": {"meeting_idx": 0, "meeting_tick": 7, "meeting_type": "", "caller_id": ""},
+                "temporal_window": {"start_tick": 0, "end_tick": 7, "resolution_source": "preceding_free_roam"},
+                "speaker": {"speaker_id": "player_0", "speaker_name": "Alice", "team": "goose", "role": "Goose"},
+                "utterance": {"raw": "I was in medbay."},
+                "structured_claim": {"claim_type": "location", "subject": "Alice", "target": None},
+                "verification": {"verdict": "true", "verifier_name": "verify_location_claim", "reason": "ok"},
+                "ground_truth_events": [],
+                "extraction": {"cache_hit": False, "dedup_collapsed_n": 0, "prompt_version": "test", "model": "test"},
+            },
+            {
+                "meeting": {"meeting_idx": 0, "meeting_tick": 7, "meeting_type": "", "caller_id": ""},
+                "temporal_window": {"start_tick": 0, "end_tick": 7, "resolution_source": "preceding_free_roam"},
+                "speaker": {"speaker_id": "player_1", "speaker_name": "Bob", "team": "goose", "role": "Goose"},
+                "utterance": {"raw": "I was mostly waiting."},
+                "structured_claim": {"claim_type": "activity", "subject": "Bob", "target": None},
+                "verification": {"verdict": "near_miss", "verifier_name": "verify_activity_claim", "reason": "ok"},
+                "ground_truth_events": [],
+                "extraction": {"cache_hit": False, "dedup_collapsed_n": 0, "prompt_version": "test", "model": "test"},
+            },
+            {
+                "meeting": {"meeting_idx": 0, "meeting_tick": 7, "meeting_type": "", "caller_id": ""},
+                "temporal_window": {"start_tick": 0, "end_tick": 7, "resolution_source": "preceding_free_roam"},
+                "speaker": {"speaker_id": "player_2", "speaker_name": "Charlie", "team": "goose", "role": "Goose"},
+                "utterance": {"raw": "I saw Diana in cafeteria."},
+                "structured_claim": {"claim_type": "sighting", "subject": "Charlie", "target": "Diana"},
+                "verification": {"verdict": "unverifiable", "verifier_name": "verify_sighting_claim", "reason": "target not found"},
+                "ground_truth_events": [],
+                "extraction": {"cache_hit": False, "dedup_collapsed_n": 0, "prompt_version": "test", "model": "test"},
+            },
+        ]
+
+        # Must not raise or log warning — counts agree (2 verifiable)
+        pipeline._assert_audit_metrics_consistent(metrics)
+
+    def test_empty_claims(self, simple_map: GameMap) -> None:
+        """Empty claims list should produce zero verifiable claims."""
+        pipeline = self._make_pipeline(simple_map)
+        metrics = Tier3Metrics()
+        pipeline._compute_metrics(metrics, [], {}, {})
+        assert metrics.total_claims == 0
+        assert metrics.verifiable_claims == 0
+        assert metrics.goose_total_verifiable == 0
+        assert metrics.duck_total_verifiable == 0
