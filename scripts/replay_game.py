@@ -322,6 +322,7 @@ def replay(
     log_path: str,
     output_dir: str,
     video_path: str | None = None,
+    fps: int = 2,
 ) -> None:
     events = load_events(log_path)
     if not events:
@@ -458,7 +459,7 @@ def replay(
     print(f"Replay complete. Generated {frame_counter} frames in {output_dir}")
 
     if video_path:
-        _make_video(output_dir, video_path)
+        _make_video(output_dir, video_path, fps=fps)
 
 
 def _make_video(frames_dir: str, output_path: str, fps: int = 2) -> None:
@@ -475,7 +476,9 @@ def _make_video(frames_dir: str, output_path: str, fps: int = 2) -> None:
     ]
     print(f"Creating video: {output_path}")
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(
+            cmd, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+        )
         print(f"Video saved to {output_path}")
     except FileNotFoundError:
         print("ffmpeg not found. Install ffmpeg to generate videos.")
@@ -509,7 +512,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    replay(args.log_path, args.output, args.video)
+    replay(args.log_path, args.output, args.video, fps=args.fps)
 
 
 if __name__ == "__main__":
