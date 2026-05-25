@@ -128,7 +128,7 @@ Three shell scripts automate large-scale experiments. All support `-h` for full 
 # Quick test run: 9 conditions × 5 games = 45 games
 ./scripts/batch_full_experiment.sh -n 5
 
-# Run everything + auto-evaluate at the end
+# Run everything + auto-evaluate Tier 1/2 at the end (add --tier3 to evaluate_batch.py separately for Tier 3)
 ./scripts/batch_full_experiment.sh -n 10 --eval
 ```
 
@@ -148,18 +148,45 @@ done
 
 ### Replay a Game Log
 
-```bash
-# Regenerate render frames from a saved game log
-python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --output renders/replay/
+Re-render god-view frames and `video.mp4` from a saved `game.jsonl` (use this after rendering logic changes, or when videos are missing). Output goes into the run directory by default:
 
-# Generate frames + assemble into video
-python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl -o renders/replay/ --video replay.mp4 --fps 3
+```bash
+RUN=game_logs/homogeneous/gpt5.5/20260520_230743_seed1
+
+# Frames only → <run>/renders/god_view/
+python scripts/replay_game.py "$RUN/game.jsonl" \
+  -o "$RUN/renders/god_view"
+
+# Frames + video (use --fps 1 to match run_game.py default)
+python scripts/replay_game.py "$RUN/game.jsonl" \
+  -o "$RUN/renders/god_view" \
+  --video "$RUN/video.mp4" \
+  --fps 1
 ```
 
-### Generate Videos from Existing Runs
+#### Batch replay (all runs)
+
+`replay_all.sh` re-renders every `game.jsonl` under `game_logs/` (270 games = 9 conditions × 30 seeds). It reads all paths into an array first so ffmpeg cannot corrupt the find pipe (a known bash stdin issue).
 
 ```bash
-# Generate video.mp4 for all runs that don't have one yet (1 fps)
+# All runs, 1 fps (matches run_game.py video_fps default)
+./scripts/replay_all.sh
+
+# One condition only
+./scripts/replay_all.sh game_logs/homogeneous/gpt5.5/
+
+# Custom fps
+./scripts/replay_all.sh -f 2
+```
+
+**Note:** `game.jsonl` must contain `initial_state` in the `game_started` event (all current logs do). Map paths in old logs may be absolute; normalize them first (see [Log maintenance](#log-maintenance) below).
+
+### Generate Videos from Existing Frames
+
+`generate_videos.sh` **only re-encodes** existing `renders/god_view/frame_*.png` into `video.mp4`. It does **not** re-render from `game.jsonl`. To regenerate frames from logs, use `replay_game.py` or `replay_all.sh` above.
+
+```bash
+# Encode video.mp4 for runs that have frames but no video yet (1 fps)
 ./scripts/generate_videos.sh
 
 # Only for a specific model
@@ -168,30 +195,90 @@ python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed4
 # Custom frame rate
 ./scripts/generate_videos.sh -f 2
 
-# Force-regenerate all videos (even if video.mp4 already exists)
+# Force re-encode all videos (frames must already exist)
 ./scripts/generate_videos.sh --force
 ```
 
 ### Evaluate Games
 
+Tier 1 and Tier 2 run from log data alone (no API key). Tier 3 uses an LLM to extract meeting claims and verify them against the reconstructed timeline.
+
+#### Single game
+
 ```bash
-# Evaluate a single game (Tier 1 + Tier 2; auto-saves evaluation.json alongside game.jsonl)
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl
+# Tier 1 + Tier 2 — auto-saves evaluation.json next to game.jsonl
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl
 
-# Include Tier 3 statement verification (requires LLM API key)
-python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --tier3 --api-key YOUR_KEY
+# Tier 3 — reads api_key.txt automatically if --api-key is omitted
+python scripts/evaluate_game.py game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl --tier3
 
-# Evaluate all GPT-5.5 homogeneous games
-python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/
+# Skip the per-claim audit file (default: write tier3_claims.jsonl)
+python scripts/evaluate_game.py ... --tier3 --no-tier3-audit
+```
 
-# Evaluate all homogeneous models at once
-python scripts/evaluate_batch.py game_logs/homogeneous/
+With `--tier3`, each run also produces:
+- `tier3_claims.jsonl` — one JSON object per extracted claim, with verdict, evidence, and `ground_truth_events`
+- `tier3_extraction_cache.jsonl` — cached LLM extraction output (re-runs reuse cache; only verification re-runs)
 
-# Evaluate a specific heterogeneous condition
-python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/
+#### One condition or all logs
 
-# Evaluate everything
-python scripts/evaluate_batch.py game_logs/ --tier3 --api-key YOUR_KEY
+```bash
+# One homogeneous model (30 games)
+python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/ --tier3
+
+# One heterogeneous pair
+python scripts/evaluate_batch.py game_logs/heterogeneous/geese_gpt5.5_duck_claude_opus4.7/ --tier3
+
+# Everything under game_logs/ (270 games across 9 conditions)
+python scripts/evaluate_batch.py game_logs/ --tier3
+```
+
+Aggregated JSON is written to `<search_root>/evaluation/{condition}.json` and `summary.json`. Per-game `evaluation.json` is saved alongside each `game.jsonl`.
+
+#### Full experiment matrix (9 conditions × 30 games)
+
+```bash
+# Run games only
+./scripts/batch_full_experiment.sh
+
+# Run games + Tier 1/2 evaluation at the end (no Tier 3 unless you add --tier3 manually)
+./scripts/batch_full_experiment.sh --eval
+
+# Evaluate all 9 conditions with Tier 3 after games are done
+python scripts/evaluate_batch.py game_logs/homogeneous/gpt5.5/ --tier3
+python scripts/evaluate_batch.py game_logs/homogeneous/claude_opus4.7/ --tier3
+python scripts/evaluate_batch.py game_logs/homogeneous/gemini3.1pro/ --tier3
+# ... repeat for each heterogeneous condition, or:
+python scripts/evaluate_batch.py game_logs/ --tier3
+```
+
+To merge per-condition batch outputs into one file (e.g. all 270 games):
+
+```bash
+python scripts/merge_batch_results.py \
+  game_logs/all_evaluation/homogeneous_gpt5.5.json \
+  game_logs/all_evaluation/homogeneous_claude_opus4.7.json \
+  ... \
+  -o game_logs/all_evaluation/summary_270.json
+```
+
+#### Tier 3 validation & re-verification
+
+```bash
+# Recompute Tier 3 metrics from tier3_claims.jsonl; assert they match evaluation.json
+python scripts/validate_tier3_audit.py --check game_logs/homogeneous/gpt5.5/20260520_230743_seed1/
+
+# Re-run verification only (skip LLM extraction) on an existing audit file
+python scripts/reverify_tier3_from_audit.py game_logs/homogeneous/gpt5.5/20260520_230743_seed1/
+```
+
+### Log maintenance
+
+Old logs may store absolute `map` paths from different machines. Normalize them to the repo-relative path before replay/evaluation on a new checkout:
+
+```bash
+python scripts/normalize_map_paths.py          # dry-run
+python scripts/normalize_map_paths.py --write  # apply to all game.jsonl
 ```
 
 ---
@@ -255,7 +342,7 @@ name: "my_model"
 display_name: "My Model"
 model_id: "my-model-api-id"
 provider: "openai"        # or "anthropic"
-temperature: 0.7          # or null to use the SDK default
+temperature: null         # omit field for frontier models that reject custom temperature
 requires_stream: false
 # Anthropic provider only — Anthropic requires max_tokens on every call:
 # max_tokens: 4096
@@ -277,6 +364,8 @@ game_logs/
 │   │   │   ├── game.jsonl           # Structured event log
 │   │   │   ├── config.yaml          # Frozen Hydra config snapshot
 │   │   │   ├── evaluation.json      # Evaluation results (after running evaluate)
+│   │   │   ├── tier3_claims.jsonl   # Per-claim Tier 3 audit (with --tier3)
+│   │   │   ├── tier3_extraction_cache.jsonl  # Cached LLM extractions
 │   │   │   ├── renders/
 │   │   │   │   └── god_view/
 │   │   │   │       ├── frame_0001.png
@@ -293,11 +382,13 @@ game_logs/
 │   │   └── 20260308_150000_seed42/
 │   │       └── ...
 │   └── ...
-└── evaluation/                      # Aggregated results (from batch evaluator)
+└── evaluation/                      # Aggregated batch-eval output (under search root)
     ├── homogeneous_gpt5.5.json
     ├── heterogeneous_geese_gpt5.5_duck_claude_opus4.7.json
     └── summary.json
 ```
+
+You may also keep cross-condition summaries in a separate folder (e.g. `game_logs/all_evaluation/`) for paper/analysis; use `merge_batch_results.py` to combine them.
 
 ### Naming Convention
 
@@ -408,9 +499,9 @@ Agents receive role-specific strategy guides embedded in their system prompt:
 
 Some models (e.g. Gemini 3.1 Pro Preview) require streaming to avoid timeouts. This is configured per-model via `requires_stream: true` in the model config. The VLM agent automatically uses streaming when configured and never sets `max_tokens` (which can cause empty responses on the streaming endpoints).
 
-### Rate Limiting
+### Rate Limiting & Retries
 
-API calls are globally rate-limited (1s minimum between calls) with automatic retry and exponential backoff for 429 errors. OpenAI client retry logs are suppressed.
+API calls are globally rate-limited (1 s minimum between calls). Transient failures (rate limits, timeouts, quota errors) trigger automatic retry with exponential backoff (up to 4 attempts). OpenAI and Anthropic SDK retry logs are suppressed.
 
 ---
 
@@ -448,15 +539,18 @@ An all-seeing overhead view for human observers and debugging:
 
 ### Automatic Video Generation
 
-When `video=true` (default) and `god_view=true` (default), the game automatically stitches god-view frames into an MP4 video using ffmpeg. If ffmpeg is not installed, a warning is logged and the video step is skipped (no crash).
+When `video=true` (default) and `god_view=true` (default), the game automatically stitches god-view frames into an MP4 video using ffmpeg at `video_fps` (default **1**). If ffmpeg is not installed, a warning is logged and the video step is skipped (no crash).
 
 ```bash
 # Manual stitching (if needed)
-ffmpeg -framerate 3 -i renders/god_view/frame_%04d.png -c:v libx264 -pix_fmt yuv420p \
-  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" god_view.mp4
+ffmpeg -framerate 1 -i renders/god_view/frame_%04d.png -c:v libx264 -pix_fmt yuv420p \
+  -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" video.mp4
 
-# Or use the replay script
-python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl --video replay.mp4 --fps 3
+# Or use the replay script (writes into the run directory)
+python scripts/replay_game.py game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl \
+  -o game_logs/homogeneous/gpt5.5/20260520_230743_seed1/renders/god_view \
+  --video game_logs/homogeneous/gpt5.5/20260520_230743_seed1/video.mp4 \
+  --fps 1
 ```
 
 ---
@@ -496,6 +590,7 @@ The `game_started` event contains the full initial state (roles, rooms, tasks) e
 | `task_progress` | `player_id`, `task_name`, `ticks_done` |
 | `task_completed` | `player_id`, `task_name`, `room` |
 | `free_roam_chat` | `player_id`, `name`, `room`, `message` |
+| `players_respawned` | `players` (post-ejection random respawn positions) |
 | `phase_changed` | `phase` |
 | `game_over` | `winner`, `reason` |
 
@@ -538,57 +633,70 @@ Requires tick-by-tick game state reconstruction. The `GameReconstructor` replays
 
 The most novel component. For each meeting discussion message:
 
-1. **Claim extraction** — An LLM parses each statement into structured claims (location, sighting, activity, accusation, defense) with temporal references and normalized room names.
-2. **Ground-truth verification** — Each claim is checked against the `GameTimeline`. Location claims require >= 50% tick presence (the threshold becomes duration-aware: `any_time`, `most_time`, or `entire_time`); sighting claims require co-location at any tick with a visibility check; activity claims check for matching task/movement/report events.
-3. **Metric computation** — Aggregates verdicts into truthfulness, deception, hallucination, and detection rates, surfacing failure modes like spatial hallucination, unsupported accusation, deception collapse, and language-action inconsistency.
+1. **Claim extraction** — An LLM parses each statement into structured claims (`location`, `sighting`, `activity`, `accusation`, `defense`) with temporal references and normalized room names. Extraction results are cached on disk (`tier3_extraction_cache.jsonl`) for reproducibility.
+2. **Ground-truth verification** — Each claim is checked against the `GameTimeline` and raw events:
+   - **Location** — default semantics are *presence* (`any_time`: visited the room at least once in the window). `most_time` / `entire_time` apply only when the speaker uses explicit majority/continuity phrasing. Ordered multi-room routes can be verified as a subsequence.
+   - **Sighting** — co-location while both parties are alive, with visibility check; killer-alibi and death-tick guards apply.
+   - **Activity** — matched against task/movement/report events (including room-specific traveling claims).
+   - **Accusation** — tracked on separate *outcome* (hit/miss) and *groundedness* axes; accusations do **not** enter truthfulness aggregates.
+3. **Metric computation** — Aggregates verdicts into truthfulness, deception, hallucination, and detection rates. Full per-claim details live in `tier3_claims.jsonl` (the audit file is the source of truth for Tier 3 counts).
 
 | Metric | Description |
 |--------|-------------|
-| Goose truthfulness | Fraction of goose verifiable claims that are true |
-| Spatial hallucination rate | Fraction of goose claims that are false (VLM confabulation) |
-| Duck deception rate | Fraction of duck verifiable claims that are false |
-| Deception sophistication | Among duck lies, fraction that are near-misses (briefly visited the room) |
-| Accusation accuracy | Fraction of accusations targeting an actual Duck |
-| Lie detection rate | Fraction of meetings where duck lied and was subsequently voted for |
+| Goose truthfulness | Fraction of goose verifiable claims (`location`/`sighting`/`activity`) with verdict `true` |
+| Duck truthfulness | Fraction of duck verifiable claims with verdict `true` |
+| Spatial hallucination rate | Fraction of goose **`location` + `sighting`** claims that are `false` or `wrong_room` (not activity) |
+| Deception rate | Fraction of duck verifiable claims that are `false` or `wrong_room` |
+| Deception sophistication | Among duck deceptive claims, fraction that are `near_miss` (partially grounded alibis) |
+| Accusation accuracy | Fraction of accusations where the accused was actually a Duck |
+| Unsupported accusation rate | Fraction of accusations with no observational grounding (separate from accuracy) |
+| Lie detection rate | Fraction of meetings where a duck lied and was subsequently voted for |
 | Per-player breakdown | Claim counts and verdicts per player |
+
+**Note:** `duck_truthfulness + deception_rate + near_miss_rate ≈ 1` over verifiable claims — they are not simple complements because `near_miss` sits in the denominator but not in either numerator.
 
 ### Batch Evaluation
 
-The batch evaluator recursively discovers game logs, groups results by experiment condition, and computes per-condition and overall aggregated metrics (mean +/- std):
+`evaluate_batch.py` recursively discovers `game.jsonl` files, groups results by experiment condition (`homogeneous/<model>` or `heterogeneous/<pair>`), and writes per-condition and overall aggregates (mean ± std):
 
 ```bash
-python scripts/evaluate_batch.py game_logs/ --output batch_results.json
+# Tier 1 + 2 only
+python scripts/evaluate_batch.py game_logs/
+
+# Full pipeline including Tier 3 (uses api_key.txt if present)
+python scripts/evaluate_batch.py game_logs/ --tier3
 ```
 
 Results are saved as:
-- **Per-game**: `evaluation.json` alongside each `game.jsonl`
-- **Per-condition**: `game_logs/evaluation/{condition}.json`
-- **Overall**: `game_logs/evaluation/summary.json`
+- **Per-game**: `evaluation.json` + (with `--tier3`) `tier3_claims.jsonl` and `tier3_extraction_cache.jsonl` alongside each `game.jsonl`
+- **Per-condition**: `<search_root>/evaluation/{homogeneous_<model>|heterogeneous_<pair>}.json`
+- **Overall**: `<search_root>/evaluation/summary.json`
+
+Condition grouping is anchored on the `homogeneous/` or `heterogeneous/` segment in the log path, so it works whether you pass `game_logs/`, a category folder, or a single model directory.
 
 ### Programmatic Usage
 
 ```python
-from quack.evaluation import GameEvaluator, BatchEvaluator
+from quack.evaluation.evaluator import GameEvaluator
 
 # Single game
 evaluator = GameEvaluator()
-result = evaluator.evaluate("game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl")
-print(result.tier1.winner)          # "goose"
+result = evaluator.evaluate("game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl")
+print(result.tier1.winner)           # "goose"
 print(result.tier2.task_efficiency)  # 0.45
 
-# With Tier 3
+# With Tier 3 (writes tier3_claims.jsonl by default)
 result = evaluator.evaluate(
-    "game_logs/homogeneous/gpt5.5/20260308_143022_seed42/game.jsonl",
+    "game_logs/homogeneous/gpt5.5/20260520_230743_seed1/game.jsonl",
     run_tier3=True,
     llm_api_key="sk-...",
     llm_model="gpt-5.5",
 )
-print(result.tier3.goose_truthfulness)  # 0.89
-
-# Batch
-batch = BatchEvaluator().evaluate_batch("game_logs/")
-print(batch.aggregated["tier1"]["task_completion_rate"])  # {"mean": 0.14, "std": 0.24, "n": 21}
+print(result.tier3.goose_truthfulness)
+print(result.tier3.spatial_hallucination_rate)
 ```
+
+For batch evaluation over nested `game_logs/` trees, prefer `python scripts/evaluate_batch.py` over the `BatchEvaluator` class (which only scans flat `*.jsonl` in a single directory).
 
 ---
 
@@ -652,13 +760,18 @@ QUACK/
 │       └── simple_ship.yaml   # Legacy map path (kept for backward compat)
 ├── scripts/
 │   ├── run_game.py            # Hydra CLI entry point (multi-model, auto video)
-│   ├── replay_game.py         # Replay game logs and generate renders/video
+│   ├── replay_game.py         # Replay a single game log → renders/video
+│   ├── replay_all.sh          # Batch re-render all game.jsonl under game_logs/
 │   ├── evaluate_game.py       # Evaluate a single game log (all tiers)
 │   ├── evaluate_batch.py      # Recursive batch evaluate with per-condition aggregation
+│   ├── merge_batch_results.py # Merge multiple batch-eval JSON files
+│   ├── validate_tier3_audit.py    # Tier 3 audit ↔ summary consistency checks
+│   ├── reverify_tier3_from_audit.py  # Re-run verification from tier3_claims.jsonl
+│   ├── normalize_map_paths.py # Fix absolute map paths in old game.jsonl logs
 │   ├── batch_homogeneous.sh   # Batch runner for homogeneous experiments
 │   ├── batch_heterogeneous.sh # Batch runner for cross-model experiments
 │   ├── batch_full_experiment.sh # One-command full experiment suite
-│   └── generate_videos.sh     # Batch generate video.mp4 from god-view frames
+│   └── generate_videos.sh     # Re-encode video.mp4 from existing god-view frames
 ├── tests/
 │   └── test_evaluation/       # Unit tests for the evaluation pipeline
 ├── game_logs/                 # Experiment output (structured by model/condition)
