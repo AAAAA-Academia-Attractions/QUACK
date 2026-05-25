@@ -50,7 +50,7 @@ _TIER3_FIELDS = [
     "goose_truthfulness", "duck_truthfulness",
     "spatial_hallucination_rate", "deception_rate",
     "deception_sophistication", "accusation_accuracy",
-    "lie_detection_rate",
+    "unsupported_accusation_rate", "lie_detection_rate",
 ]
 
 

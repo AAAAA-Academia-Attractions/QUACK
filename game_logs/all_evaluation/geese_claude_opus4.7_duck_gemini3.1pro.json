@@ -133,6 +133,11 @@
         "std": 0.3414,
         "n": 30
       },
+      "unsupported_accusation_rate": {
+        "mean": 0.453,
+        "std": 0.4158,
+        "n": 30
+      },
       "lie_detection_rate": {
         "mean": 0.4667,
         "std": 0.5074,
