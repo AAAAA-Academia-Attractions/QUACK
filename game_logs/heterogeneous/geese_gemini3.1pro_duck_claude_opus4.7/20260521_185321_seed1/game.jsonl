@@ -1,0 +1,203 @@
+{"timestamp": 1779360801.3998, "event_type": "game_started", "tick": 0, "data": {"players": ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"], "config": {"num_players": 6, "num_ducks": 1, "map": "configs/maps/simple_ship.yaml"}, "initial_state": {"player_0": {"name": "Alice", "role": "Goose", "team": "goose", "room": "weapons", "tasks": [{"name": "Sort Cargo", "room": "storage", "ticks_required": 3}, {"name": "Fuel Engines", "room": "lower_engine", "ticks_required": 3}, {"name": "Chart Course", "room": "navigation", "ticks_required": 3}, {"name": "Clean O2 Filter", "room": "oxygen", "ticks_required": 3}, {"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}]}, "player_1": {"name": "Bob", "role": "Duck", "team": "duck", "room": "electrical", "tasks": [{"name": "Sort Cargo", "room": "storage", "ticks_required": 3}, {"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}, {"name": "Fuel Engines", "room": "lower_engine", "ticks_required": 3}, {"name": "Submit Scan", "room": "medbay", "ticks_required": 3}, {"name": "Check Cameras", "room": "security", "ticks_required": 3}]}, "player_2": {"name": "Charlie", "role": "Goose", "team": "goose", "room": "navigation", "tasks": [{"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}, {"name": "Sort Cargo", "room": "storage", "ticks_required": 3}, {"name": "Align Engine Output", "room": "upper_engine", "ticks_required": 3}, {"name": "Check Cameras", "room": "security", "ticks_required": 3}, {"name": "Clean O2 Filter", "room": "oxygen", "ticks_required": 3}]}, "player_3": {"name": "Diana", "role": "Goose", "team": "goose", "room": "cafeteria", "tasks": [{"name": "Clean O2 Filter", "room": "oxygen", "ticks_required": 3}, {"name": "Check Cameras", "room": "security", "ticks_required": 3}, {"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}, {"name": "Fuel Engines", "room": "lower_engine", "ticks_required": 3}, {"name": "Sort Cargo", "room": "storage", "ticks_required": 3}]}, "player_4": {"name": "Eve", "role": "Goose", "team": "goose", "room": "medbay", "tasks": [{"name": "Chart Course", "room": "navigation", "ticks_required": 3}, {"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}, {"name": "Submit Scan", "room": "medbay", "ticks_required": 3}, {"name": "Check Cameras", "room": "security", "ticks_required": 3}, {"name": "Clean O2 Filter", "room": "oxygen", "ticks_required": 3}]}, "player_5": {"name": "Frank", "role": "Goose", "team": "goose", "room": "oxygen", "tasks": [{"name": "Fuel Engines", "room": "lower_engine", "ticks_required": 3}, {"name": "Clear Asteroids", "room": "weapons", "ticks_required": 3}, {"name": "Calibrate Distributor", "room": "electrical", "ticks_required": 3}, {"name": "Clean O2 Filter", "room": "oxygen", "ticks_required": 3}, {"name": "Submit Scan", "room": "medbay", "ticks_required": 3}]}}}}
+{"timestamp": 1779360801.495178, "event_type": "tick_start", "tick": 1, "data": {"tick": 1}}
+{"timestamp": 1779360823.446165, "event_type": "player_moved", "tick": 1, "data": {"player_id": "player_2", "from": "navigation", "to": "security", "ticks_remaining": 2}}
+{"timestamp": 1779360843.240353, "event_type": "task_progress", "tick": 1, "data": {"player_id": "player_0", "task_name": "Clear Asteroids", "room": "weapons", "progress": "1/3"}}
+{"timestamp": 1779360848.977537, "event_type": "task_progress", "tick": 1, "data": {"player_id": "player_5", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "1/3"}}
+{"timestamp": 1779360854.231561, "event_type": "player_moved", "tick": 1, "data": {"player_id": "player_1", "from": "electrical", "to": "medbay"}}
+{"timestamp": 1779360874.896445, "event_type": "task_progress", "tick": 1, "data": {"player_id": "player_4", "task_name": "Submit Scan", "room": "medbay", "progress": "1/3"}}
+{"timestamp": 1779360874.898713, "event_type": "free_roam_chat", "tick": 1, "data": {"player_id": "player_4", "name": "Eve", "room": "medbay", "message": "Hey Bob, just starting my scan here.", "tick": 1}}
+{"timestamp": 1779360880.319026, "event_type": "player_moved", "tick": 1, "data": {"player_id": "player_3", "from": "cafeteria", "to": "oxygen", "ticks_remaining": 2}}
+{"timestamp": 1779360880.3205, "event_type": "tick_end", "tick": 1, "data": {"tick": 1}}
+{"timestamp": 1779360880.4312901, "event_type": "tick_start", "tick": 2, "data": {"tick": 2}}
+{"timestamp": 1779360885.980439, "event_type": "task_progress", "tick": 2, "data": {"player_id": "player_4", "task_name": "Submit Scan", "room": "medbay", "progress": "2/3"}}
+{"timestamp": 1779360891.5704682, "event_type": "task_progress", "tick": 2, "data": {"player_id": "player_5", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "2/3"}}
+{"timestamp": 1779360897.219445, "event_type": "task_progress", "tick": 2, "data": {"player_id": "player_0", "task_name": "Clear Asteroids", "room": "weapons", "progress": "2/3"}}
+{"timestamp": 1779360903.0701408, "event_type": "task_progress", "tick": 2, "data": {"player_id": "player_1", "task_name": "Submit Scan", "room": "medbay", "progress": "1/3"}}
+{"timestamp": 1779360903.071164, "event_type": "free_roam_chat", "tick": 2, "data": {"player_id": "player_1", "name": "Bob", "room": "medbay", "message": "Doing my scan real quick", "tick": 2}}
+{"timestamp": 1779360903.072909, "event_type": "tick_end", "tick": 2, "data": {"tick": 2}}
+{"timestamp": 1779360903.167267, "event_type": "tick_start", "tick": 3, "data": {"tick": 3}}
+{"timestamp": 1779360909.17055, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_5", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "3/3"}}
+{"timestamp": 1779360909.1721358, "event_type": "task_completed", "tick": 3, "data": {"player_id": "player_5", "task_name": "Clean O2 Filter", "room": "oxygen"}}
+{"timestamp": 1779360909.173791, "event_type": "free_roam_chat", "tick": 3, "data": {"player_id": "player_5", "name": "Frank", "room": "oxygen", "message": "Hey Diana, just finishing up my task here.", "tick": 3}}
+{"timestamp": 1779360915.607168, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_3", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "1/3"}}
+{"timestamp": 1779360915.610508, "event_type": "free_roam_chat", "tick": 3, "data": {"player_id": "player_3", "name": "Diana", "room": "oxygen", "message": "Cool, I'm starting mine now. Let's stick together?", "tick": 3}}
+{"timestamp": 1779360921.296132, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_2", "task_name": "Check Cameras", "room": "security", "progress": "1/3"}}
+{"timestamp": 1779361801.18508, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_1", "task_name": "Submit Scan", "room": "medbay", "progress": "2/3"}}
+{"timestamp": 1779361801.187157, "event_type": "free_roam_chat", "tick": 3, "data": {"player_id": "player_1", "name": "Bob", "room": "medbay", "message": "Almost done with this scan", "tick": 3}}
+{"timestamp": 1779361807.165202, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_0", "task_name": "Clear Asteroids", "room": "weapons", "progress": "3/3"}}
+{"timestamp": 1779361807.2315369, "event_type": "task_completed", "tick": 3, "data": {"player_id": "player_0", "task_name": "Clear Asteroids", "room": "weapons"}}
+{"timestamp": 1779361813.221142, "event_type": "task_progress", "tick": 3, "data": {"player_id": "player_4", "task_name": "Submit Scan", "room": "medbay", "progress": "3/3"}}
+{"timestamp": 1779361813.2222311, "event_type": "task_completed", "tick": 3, "data": {"player_id": "player_4", "task_name": "Submit Scan", "room": "medbay"}}
+{"timestamp": 1779361813.222912, "event_type": "free_roam_chat", "tick": 3, "data": {"player_id": "player_4", "name": "Eve", "room": "medbay", "message": "Same here, one more tick.", "tick": 3}}
+{"timestamp": 1779361813.2233841, "event_type": "tick_end", "tick": 3, "data": {"tick": 3}}
+{"timestamp": 1779361813.327595, "event_type": "tick_start", "tick": 4, "data": {"tick": 4}}
+{"timestamp": 1779361820.3636181, "event_type": "player_moved", "tick": 4, "data": {"player_id": "player_5", "from": "oxygen", "to": "upper_engine"}}
+{"timestamp": 1779361820.364365, "event_type": "free_roam_chat", "tick": 4, "data": {"player_id": "player_5", "name": "Frank", "room": "oxygen", "message": "I'm heading down to upper engine, catch you later Diana!", "tick": 4}}
+{"timestamp": 1779361827.0481112, "event_type": "player_moved", "tick": 4, "data": {"player_id": "player_4", "from": "medbay", "to": "cafeteria"}}
+{"timestamp": 1779361827.0509288, "event_type": "free_roam_chat", "tick": 4, "data": {"player_id": "player_4", "name": "Eve", "room": "medbay", "message": "Scan done, heading to cafeteria then weapons!", "tick": 4}}
+{"timestamp": 1779361833.39493, "event_type": "task_progress", "tick": 4, "data": {"player_id": "player_2", "task_name": "Check Cameras", "room": "security", "progress": "2/3"}}
+{"timestamp": 1779362088.369822, "event_type": "task_progress", "tick": 4, "data": {"player_id": "player_1", "task_name": "Submit Scan", "room": "medbay", "progress": "3/3"}}
+{"timestamp": 1779362088.37165, "event_type": "task_completed", "tick": 4, "data": {"player_id": "player_1", "task_name": "Submit Scan", "room": "medbay"}}
+{"timestamp": 1779362088.372852, "event_type": "free_roam_chat", "tick": 4, "data": {"player_id": "player_1", "name": "Bob", "room": "medbay", "message": "Finishing up scan", "tick": 4}}
+{"timestamp": 1779362094.753609, "event_type": "task_progress", "tick": 4, "data": {"player_id": "player_3", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "2/3"}}
+{"timestamp": 1779362101.377546, "event_type": "player_moved", "tick": 4, "data": {"player_id": "player_0", "from": "weapons", "to": "security"}}
+{"timestamp": 1779362101.3784142, "event_type": "tick_end", "tick": 4, "data": {"tick": 4}}
+{"timestamp": 1779362101.489887, "event_type": "tick_start", "tick": 5, "data": {"tick": 5}}
+{"timestamp": 1779362106.76927, "event_type": "player_moved", "tick": 5, "data": {"player_id": "player_4", "from": "cafeteria", "to": "weapons", "ticks_remaining": 2}}
+{"timestamp": 1779362112.6390269, "event_type": "task_progress", "tick": 5, "data": {"player_id": "player_3", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "3/3"}}
+{"timestamp": 1779362112.642582, "event_type": "task_completed", "tick": 5, "data": {"player_id": "player_3", "task_name": "Clean O2 Filter", "room": "oxygen"}}
+{"timestamp": 1779362302.4757152, "event_type": "player_moved", "tick": 5, "data": {"player_id": "player_1", "from": "medbay", "to": "electrical"}}
+{"timestamp": 1779362309.238028, "event_type": "player_moved", "tick": 5, "data": {"player_id": "player_0", "from": "security", "to": "navigation", "ticks_remaining": 2}}
+{"timestamp": 1779362315.3499799, "event_type": "task_progress", "tick": 5, "data": {"player_id": "player_2", "task_name": "Check Cameras", "room": "security", "progress": "3/3"}}
+{"timestamp": 1779362315.3517098, "event_type": "task_completed", "tick": 5, "data": {"player_id": "player_2", "task_name": "Check Cameras", "room": "security"}}
+{"timestamp": 1779362322.0731, "event_type": "player_moved", "tick": 5, "data": {"player_id": "player_5", "from": "upper_engine", "to": "lower_engine", "ticks_remaining": 2}}
+{"timestamp": 1779362322.074212, "event_type": "tick_end", "tick": 5, "data": {"tick": 5}}
+{"timestamp": 1779362322.1977, "event_type": "tick_start", "tick": 6, "data": {"tick": 6}}
+{"timestamp": 1779362328.0235698, "event_type": "player_moved", "tick": 6, "data": {"player_id": "player_2", "from": "security", "to": "weapons"}}
+{"timestamp": 1779362335.051711, "event_type": "player_moved", "tick": 6, "data": {"player_id": "player_1", "from": "electrical", "to": "security", "ticks_remaining": 2}}
+{"timestamp": 1779362341.162011, "event_type": "player_moved", "tick": 6, "data": {"player_id": "player_3", "from": "oxygen", "to": "upper_engine"}}
+{"timestamp": 1779362341.16412, "event_type": "tick_end", "tick": 6, "data": {"tick": 6}}
+{"timestamp": 1779362341.271601, "event_type": "tick_start", "tick": 7, "data": {"tick": 7}}
+{"timestamp": 1779362346.327451, "event_type": "task_progress", "tick": 7, "data": {"player_id": "player_0", "task_name": "Chart Course", "room": "navigation", "progress": "1/3"}}
+{"timestamp": 1779362352.1070561, "event_type": "task_progress", "tick": 7, "data": {"player_id": "player_2", "task_name": "Clear Asteroids", "room": "weapons", "progress": "1/3"}}
+{"timestamp": 1779362352.107832, "event_type": "free_roam_chat", "tick": 7, "data": {"player_id": "player_2", "name": "Charlie", "room": "weapons", "message": "Hey Eve, just doing my asteroids task here.", "tick": 7}}
+{"timestamp": 1779362357.723628, "event_type": "player_moved", "tick": 7, "data": {"player_id": "player_3", "from": "upper_engine", "to": "lower_engine", "ticks_remaining": 2}}
+{"timestamp": 1779362363.486947, "event_type": "task_progress", "tick": 7, "data": {"player_id": "player_4", "task_name": "Clear Asteroids", "room": "weapons", "progress": "1/3"}}
+{"timestamp": 1779362363.490743, "event_type": "free_roam_chat", "tick": 7, "data": {"player_id": "player_4", "name": "Eve", "room": "weapons", "message": "Hey Charlie, cool, doing mine too.", "tick": 7}}
+{"timestamp": 1779362368.559478, "event_type": "task_progress", "tick": 7, "data": {"player_id": "player_5", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "1/3"}}
+{"timestamp": 1779362368.560274, "event_type": "tick_end", "tick": 7, "data": {"tick": 7}}
+{"timestamp": 1779362368.684479, "event_type": "tick_start", "tick": 8, "data": {"tick": 8}}
+{"timestamp": 1779362374.997377, "event_type": "task_progress", "tick": 8, "data": {"player_id": "player_2", "task_name": "Clear Asteroids", "room": "weapons", "progress": "2/3"}}
+{"timestamp": 1779362374.998307, "event_type": "free_roam_chat", "tick": 8, "data": {"player_id": "player_2", "name": "Charlie", "room": "weapons", "message": "Still working on these asteroids, Eve. Almost done.", "tick": 8}}
+{"timestamp": 1779362380.6548932, "event_type": "task_progress", "tick": 8, "data": {"player_id": "player_0", "task_name": "Chart Course", "room": "navigation", "progress": "2/3"}}
+{"timestamp": 1779362386.477525, "event_type": "task_progress", "tick": 8, "data": {"player_id": "player_5", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "2/3"}}
+{"timestamp": 1779362392.159936, "event_type": "task_progress", "tick": 8, "data": {"player_id": "player_4", "task_name": "Clear Asteroids", "room": "weapons", "progress": "2/3"}}
+{"timestamp": 1779362392.161119, "event_type": "free_roam_chat", "tick": 8, "data": {"player_id": "player_4", "name": "Eve", "room": "weapons", "message": "Nice, I just started mine.", "tick": 8}}
+{"timestamp": 1779362521.303731, "event_type": "task_progress", "tick": 8, "data": {"player_id": "player_1", "task_name": "Check Cameras", "room": "security", "progress": "1/3"}}
+{"timestamp": 1779362521.305005, "event_type": "tick_end", "tick": 8, "data": {"tick": 8}}
+{"timestamp": 1779362521.459997, "event_type": "tick_start", "tick": 9, "data": {"tick": 9}}
+{"timestamp": 1779362527.624614, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_0", "task_name": "Chart Course", "room": "navigation", "progress": "3/3"}}
+{"timestamp": 1779362527.625671, "event_type": "task_completed", "tick": 9, "data": {"player_id": "player_0", "task_name": "Chart Course", "room": "navigation"}}
+{"timestamp": 1779362534.419748, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_5", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "3/3"}}
+{"timestamp": 1779362534.4212239, "event_type": "task_completed", "tick": 9, "data": {"player_id": "player_5", "task_name": "Fuel Engines", "room": "lower_engine"}}
+{"timestamp": 1779362534.4217339, "event_type": "free_roam_chat", "tick": 9, "data": {"player_id": "player_5", "name": "Frank", "room": "lower_engine", "message": "Hey Diana, nice seeing you again! Just wrapping up my engines task.", "tick": 9}}
+{"timestamp": 1779362540.105116, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_4", "task_name": "Clear Asteroids", "room": "weapons", "progress": "3/3"}}
+{"timestamp": 1779362540.106569, "event_type": "task_completed", "tick": 9, "data": {"player_id": "player_4", "task_name": "Clear Asteroids", "room": "weapons"}}
+{"timestamp": 1779362540.107255, "event_type": "free_roam_chat", "tick": 9, "data": {"player_id": "player_4", "name": "Eve", "room": "weapons", "message": "Almost done with my task here!", "tick": 9}}
+{"timestamp": 1779362551.018935, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_2", "task_name": "Clear Asteroids", "room": "weapons", "progress": "3/3"}}
+{"timestamp": 1779362551.020022, "event_type": "task_completed", "tick": 9, "data": {"player_id": "player_2", "task_name": "Clear Asteroids", "room": "weapons"}}
+{"timestamp": 1779362551.0206678, "event_type": "free_roam_chat", "tick": 9, "data": {"player_id": "player_2", "name": "Charlie", "room": "weapons", "message": "Nice, me too! Just finishing up now.", "tick": 9}}
+{"timestamp": 1779362557.567399, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_3", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "1/3"}}
+{"timestamp": 1779362557.5690188, "event_type": "free_roam_chat", "tick": 9, "data": {"player_id": "player_3", "name": "Diana", "room": "lower_engine", "message": "Hey Frank! Good to see you too. Doing my fuel task now.", "tick": 9}}
+{"timestamp": 1779362562.804723, "event_type": "task_progress", "tick": 9, "data": {"player_id": "player_1", "task_name": "Check Cameras", "room": "security", "progress": "2/3"}}
+{"timestamp": 1779362562.806048, "event_type": "tick_end", "tick": 9, "data": {"tick": 9}}
+{"timestamp": 1779362562.940084, "event_type": "tick_start", "tick": 10, "data": {"tick": 10}}
+{"timestamp": 1779362572.7169821, "event_type": "player_moved", "tick": 10, "data": {"player_id": "player_5", "from": "lower_engine", "to": "upper_engine", "ticks_remaining": 2}}
+{"timestamp": 1779362572.719191, "event_type": "free_roam_chat", "tick": 10, "data": {"player_id": "player_5", "name": "Frank", "room": "lower_engine", "message": "I'm heading to medbay for a scan next, you can come watch if you want!", "tick": 10}}
+{"timestamp": 1779362578.243718, "event_type": "task_progress", "tick": 10, "data": {"player_id": "player_3", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "2/3"}}
+{"timestamp": 1779362584.2359638, "event_type": "task_progress", "tick": 10, "data": {"player_id": "player_1", "task_name": "Check Cameras", "room": "security", "progress": "3/3"}}
+{"timestamp": 1779362584.236714, "event_type": "task_completed", "tick": 10, "data": {"player_id": "player_1", "task_name": "Check Cameras", "room": "security"}}
+{"timestamp": 1779362590.852675, "event_type": "player_moved", "tick": 10, "data": {"player_id": "player_0", "from": "navigation", "to": "storage", "ticks_remaining": 3}}
+{"timestamp": 1779362597.019592, "event_type": "player_moved", "tick": 10, "data": {"player_id": "player_4", "from": "weapons", "to": "security"}}
+{"timestamp": 1779362597.0207648, "event_type": "free_roam_chat", "tick": 10, "data": {"player_id": "player_4", "name": "Eve", "room": "weapons", "message": "Finished! Moving to security now.", "tick": 10}}
+{"timestamp": 1779362604.219732, "event_type": "player_moved", "tick": 10, "data": {"player_id": "player_2", "from": "weapons", "to": "cafeteria", "ticks_remaining": 2}}
+{"timestamp": 1779362604.2209191, "event_type": "tick_end", "tick": 10, "data": {"tick": 10}}
+{"timestamp": 1779362604.355135, "event_type": "tick_start", "tick": 11, "data": {"tick": 11}}
+{"timestamp": 1779362609.42677, "event_type": "task_progress", "tick": 11, "data": {"player_id": "player_3", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "3/3"}}
+{"timestamp": 1779362609.429993, "event_type": "task_completed", "tick": 11, "data": {"player_id": "player_3", "task_name": "Fuel Engines", "room": "lower_engine"}}
+{"timestamp": 1779362675.378339, "event_type": "player_killed", "tick": 11, "data": {"killer_id": "player_1", "target_id": "player_4", "room": "security"}}
+{"timestamp": 1779362684.4295082, "event_type": "task_progress", "tick": 11, "data": {"player_id": "player_4", "task_name": "Check Cameras", "room": "security", "progress": "1/3"}}
+{"timestamp": 1779362684.431435, "event_type": "tick_end", "tick": 11, "data": {"tick": 11}}
+{"timestamp": 1779362684.569603, "event_type": "tick_start", "tick": 12, "data": {"tick": 12}}
+{"timestamp": 1779362691.3711941, "event_type": "player_moved", "tick": 12, "data": {"player_id": "player_3", "from": "lower_engine", "to": "storage", "ticks_remaining": 2}}
+{"timestamp": 1779362697.6973171, "event_type": "player_moved", "tick": 12, "data": {"player_id": "player_5", "from": "upper_engine", "to": "medbay", "ticks_remaining": 2}}
+{"timestamp": 1779362703.529471, "event_type": "player_moved", "tick": 12, "data": {"player_id": "player_1", "from": "security", "to": "weapons"}}
+{"timestamp": 1779362709.597453, "event_type": "player_moved", "tick": 12, "data": {"player_id": "player_2", "from": "cafeteria", "to": "oxygen", "ticks_remaining": 2}}
+{"timestamp": 1779362709.5991948, "event_type": "tick_end", "tick": 12, "data": {"tick": 12}}
+{"timestamp": 1779362709.7438421, "event_type": "tick_start", "tick": 13, "data": {"tick": 13}}
+{"timestamp": 1779362715.5625548, "event_type": "task_progress", "tick": 13, "data": {"player_id": "player_0", "task_name": "Sort Cargo", "room": "storage", "progress": "1/3"}}
+{"timestamp": 1779362844.468839, "event_type": "task_progress", "tick": 13, "data": {"player_id": "player_1", "task_name": "Clear Asteroids", "room": "weapons", "progress": "1/3"}}
+{"timestamp": 1779362844.4712331, "event_type": "tick_end", "tick": 13, "data": {"tick": 13}}
+{"timestamp": 1779362844.645977, "event_type": "tick_start", "tick": 14, "data": {"tick": 14}}
+{"timestamp": 1779362851.036594, "event_type": "task_progress", "tick": 14, "data": {"player_id": "player_3", "task_name": "Sort Cargo", "room": "storage", "progress": "1/3"}}
+{"timestamp": 1779362851.037432, "event_type": "free_roam_chat", "tick": 14, "data": {"player_id": "player_3", "name": "Diana", "room": "storage", "message": "Hey Alice, just starting my cargo task here.", "tick": 14}}
+{"timestamp": 1779362858.987707, "event_type": "task_progress", "tick": 14, "data": {"player_id": "player_0", "task_name": "Sort Cargo", "room": "storage", "progress": "2/3"}}
+{"timestamp": 1779362858.988626, "event_type": "free_roam_chat", "tick": 14, "data": {"player_id": "player_0", "name": "Alice", "room": "storage", "message": "Hey Diana! Good to have some company. I'm working on Sort Cargo too.", "tick": 14}}
+{"timestamp": 1779362879.911684, "event_type": "task_progress", "tick": 14, "data": {"player_id": "player_1", "task_name": "Clear Asteroids", "room": "weapons", "progress": "2/3"}}
+{"timestamp": 1779362885.8398452, "event_type": "task_progress", "tick": 14, "data": {"player_id": "player_2", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "1/3"}}
+{"timestamp": 1779362891.373514, "event_type": "task_progress", "tick": 14, "data": {"player_id": "player_5", "task_name": "Submit Scan", "room": "medbay", "progress": "1/3"}}
+{"timestamp": 1779362891.3742652, "event_type": "tick_end", "tick": 14, "data": {"tick": 14}}
+{"timestamp": 1779362891.507636, "event_type": "tick_start", "tick": 15, "data": {"tick": 15}}
+{"timestamp": 1779362897.286965, "event_type": "task_progress", "tick": 15, "data": {"player_id": "player_3", "task_name": "Sort Cargo", "room": "storage", "progress": "2/3"}}
+{"timestamp": 1779362902.9039428, "event_type": "task_progress", "tick": 15, "data": {"player_id": "player_0", "task_name": "Sort Cargo", "room": "storage", "progress": "3/3"}}
+{"timestamp": 1779362902.9048388, "event_type": "task_completed", "tick": 15, "data": {"player_id": "player_0", "task_name": "Sort Cargo", "room": "storage"}}
+{"timestamp": 1779362902.9059598, "event_type": "free_roam_chat", "tick": 15, "data": {"player_id": "player_0", "name": "Alice", "room": "storage", "message": "Almost done with this task, I'll probably head to lower engine next. Let's stick together if you want!", "tick": 15}}
+{"timestamp": 1779362908.115181, "event_type": "task_progress", "tick": 15, "data": {"player_id": "player_2", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "2/3"}}
+{"timestamp": 1779362912.800061, "event_type": "task_progress", "tick": 15, "data": {"player_id": "player_5", "task_name": "Submit Scan", "room": "medbay", "progress": "2/3"}}
+{"timestamp": 1779363041.7980711, "event_type": "task_progress", "tick": 15, "data": {"player_id": "player_1", "task_name": "Clear Asteroids", "room": "weapons", "progress": "3/3"}}
+{"timestamp": 1779363041.8004029, "event_type": "task_completed", "tick": 15, "data": {"player_id": "player_1", "task_name": "Clear Asteroids", "room": "weapons"}}
+{"timestamp": 1779363041.8027189, "event_type": "tick_end", "tick": 15, "data": {"tick": 15}}
+{"timestamp": 1779363041.98563, "event_type": "tick_start", "tick": 16, "data": {"tick": 16}}
+{"timestamp": 1779363047.729315, "event_type": "player_moved", "tick": 16, "data": {"player_id": "player_1", "from": "weapons", "to": "cafeteria", "ticks_remaining": 2}}
+{"timestamp": 1779363053.270698, "event_type": "task_progress", "tick": 16, "data": {"player_id": "player_3", "task_name": "Sort Cargo", "room": "storage", "progress": "3/3"}}
+{"timestamp": 1779363053.271793, "event_type": "task_completed", "tick": 16, "data": {"player_id": "player_3", "task_name": "Sort Cargo", "room": "storage"}}
+{"timestamp": 1779363053.2724102, "event_type": "free_roam_chat", "tick": 16, "data": {"player_id": "player_3", "name": "Diana", "room": "storage", "message": "Just one more part of this task to go!", "tick": 16}}
+{"timestamp": 1779363058.5825868, "event_type": "task_progress", "tick": 16, "data": {"player_id": "player_5", "task_name": "Submit Scan", "room": "medbay", "progress": "3/3"}}
+{"timestamp": 1779363058.583138, "event_type": "task_completed", "tick": 16, "data": {"player_id": "player_5", "task_name": "Submit Scan", "room": "medbay"}}
+{"timestamp": 1779363066.1270368, "event_type": "player_moved", "tick": 16, "data": {"player_id": "player_0", "from": "storage", "to": "lower_engine", "ticks_remaining": 2}}
+{"timestamp": 1779363066.128432, "event_type": "free_roam_chat", "tick": 16, "data": {"player_id": "player_0", "name": "Alice", "room": "storage", "message": "Alright, I'm heading to lower engine now. See you there!", "tick": 16}}
+{"timestamp": 1779363072.714835, "event_type": "task_progress", "tick": 16, "data": {"player_id": "player_2", "task_name": "Clean O2 Filter", "room": "oxygen", "progress": "3/3"}}
+{"timestamp": 1779363072.715915, "event_type": "task_completed", "tick": 16, "data": {"player_id": "player_2", "task_name": "Clean O2 Filter", "room": "oxygen"}}
+{"timestamp": 1779363072.7165802, "event_type": "tick_end", "tick": 16, "data": {"tick": 16}}
+{"timestamp": 1779363072.864327, "event_type": "tick_start", "tick": 17, "data": {"tick": 17}}
+{"timestamp": 1779363080.118979, "event_type": "player_moved", "tick": 17, "data": {"player_id": "player_2", "from": "oxygen", "to": "upper_engine"}}
+{"timestamp": 1779363089.022593, "event_type": "player_moved", "tick": 17, "data": {"player_id": "player_3", "from": "storage", "to": "navigation", "ticks_remaining": 3}}
+{"timestamp": 1779363096.2923698, "event_type": "player_moved", "tick": 17, "data": {"player_id": "player_5", "from": "medbay", "to": "electrical"}}
+{"timestamp": 1779363096.2962391, "event_type": "tick_end", "tick": 17, "data": {"tick": 17}}
+{"timestamp": 1779363096.4445848, "event_type": "tick_start", "tick": 18, "data": {"tick": 18}}
+{"timestamp": 1779363102.049572, "event_type": "task_progress", "tick": 18, "data": {"player_id": "player_5", "task_name": "Calibrate Distributor", "room": "electrical", "progress": "1/3"}}
+{"timestamp": 1779363108.6236181, "event_type": "task_progress", "tick": 18, "data": {"player_id": "player_0", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "1/3"}}
+{"timestamp": 1779363115.235787, "event_type": "player_moved", "tick": 18, "data": {"player_id": "player_1", "from": "cafeteria", "to": "medbay"}}
+{"timestamp": 1779363122.253279, "event_type": "task_progress", "tick": 18, "data": {"player_id": "player_2", "task_name": "Align Engine Output", "room": "upper_engine", "progress": "1/3"}}
+{"timestamp": 1779363122.2573, "event_type": "tick_end", "tick": 18, "data": {"tick": 18}}
+{"timestamp": 1779363122.43697, "event_type": "tick_start", "tick": 19, "data": {"tick": 19}}
+{"timestamp": 1779363130.1921148, "event_type": "task_progress", "tick": 19, "data": {"player_id": "player_0", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "2/3"}}
+{"timestamp": 1779363136.332522, "event_type": "task_progress", "tick": 19, "data": {"player_id": "player_2", "task_name": "Align Engine Output", "room": "upper_engine", "progress": "2/3"}}
+{"timestamp": 1779363204.715136, "event_type": "player_moved", "tick": 19, "data": {"player_id": "player_1", "from": "medbay", "to": "electrical"}}
+{"timestamp": 1779363213.104356, "event_type": "task_progress", "tick": 19, "data": {"player_id": "player_5", "task_name": "Calibrate Distributor", "room": "electrical", "progress": "2/3"}}
+{"timestamp": 1779363213.105897, "event_type": "free_roam_chat", "tick": 19, "data": {"player_id": "player_5", "name": "Frank", "room": "electrical", "message": "Hey Bob. Just finishing up a task in here, you got something in electrical too?", "tick": 19}}
+{"timestamp": 1779363213.107142, "event_type": "tick_end", "tick": 19, "data": {"tick": 19}}
+{"timestamp": 1779363213.276053, "event_type": "tick_start", "tick": 20, "data": {"tick": 20}}
+{"timestamp": 1779363223.5481758, "event_type": "task_progress", "tick": 20, "data": {"player_id": "player_5", "task_name": "Calibrate Distributor", "room": "electrical", "progress": "3/3"}}
+{"timestamp": 1779363223.5529, "event_type": "task_completed", "tick": 20, "data": {"player_id": "player_5", "task_name": "Calibrate Distributor", "room": "electrical"}}
+{"timestamp": 1779363229.1391108, "event_type": "task_progress", "tick": 20, "data": {"player_id": "player_0", "task_name": "Fuel Engines", "room": "lower_engine", "progress": "3/3"}}
+{"timestamp": 1779363229.14081, "event_type": "task_completed", "tick": 20, "data": {"player_id": "player_0", "task_name": "Fuel Engines", "room": "lower_engine"}}
+{"timestamp": 1779363234.898647, "event_type": "player_moved", "tick": 20, "data": {"player_id": "player_3", "from": "navigation", "to": "security", "ticks_remaining": 2}}
+{"timestamp": 1779363240.2457159, "event_type": "task_progress", "tick": 20, "data": {"player_id": "player_2", "task_name": "Align Engine Output", "room": "upper_engine", "progress": "3/3"}}
+{"timestamp": 1779363240.247099, "event_type": "task_completed", "tick": 20, "data": {"player_id": "player_2", "task_name": "Align Engine Output", "room": "upper_engine"}}
+{"timestamp": 1779363308.8401768, "event_type": "player_killed", "tick": 20, "data": {"killer_id": "player_1", "target_id": "player_5", "room": "electrical"}}
+{"timestamp": 1779363308.844175, "event_type": "tick_end", "tick": 20, "data": {"tick": 20}}
+{"timestamp": 1779363309.0499682, "event_type": "tick_start", "tick": 21, "data": {"tick": 21}}
+{"timestamp": 1779363314.948905, "event_type": "player_moved", "tick": 21, "data": {"player_id": "player_0", "from": "lower_engine", "to": "upper_engine", "ticks_remaining": 2}}
+{"timestamp": 1779363320.405565, "event_type": "player_moved", "tick": 21, "data": {"player_id": "player_1", "from": "electrical", "to": "medbay"}}
+{"timestamp": 1779363327.473191, "event_type": "player_moved", "tick": 21, "data": {"player_id": "player_2", "from": "upper_engine", "to": "lower_engine", "ticks_remaining": 2}}
+{"timestamp": 1779363327.475901, "event_type": "tick_end", "tick": 21, "data": {"tick": 21}}
+{"timestamp": 1779363342.6149602, "event_type": "tick_start", "tick": 22, "data": {"tick": 22}}
+{"timestamp": 1779363352.286241, "event_type": "player_moved", "tick": 22, "data": {"player_id": "player_1", "from": "medbay", "to": "storage", "ticks_remaining": 2}}
+{"timestamp": 1779363357.685387, "event_type": "body_reported", "tick": 22, "data": {"caller": "player_3", "reason": "Diana reported a dead body", "bodies": [{"room": "security", "victim_name": "Eve"}, {"room": "electrical", "victim_name": "Frank"}]}}
+{"timestamp": 1779363357.687553, "event_type": "phase_changed", "tick": 22, "data": {"phase": "discussion"}}
+{"timestamp": 1779363369.0794802, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_3", "message": "I just found Eve's body in Security. I see Frank is dead too, which is sad because I saw him alive earlier. \n\nMy route was Cafeteria to Oxygen, down through both engines, then to Storage, Navigation, and finally Security where I found Eve. \n\nEarly in the round, I saw Frank in Oxygen and then again in Lower Engine, so he must have been killed after that. More recently, I was with Alice in Storage around tick 14 to 16. Alice, you can vouch for me being there\u2014I headed to Nav and Security right after we were together. \n\nI didn't see anyone else on my way up from Navigation. Did anyone catch who was near Security or Electrical? Let's get everyone's locations on the table."}}
+{"timestamp": 1779363379.156626, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_2", "message": "I started my round in Navigation and moved up through Security to Weapons early on. I actually saw Eve in Weapons around ticks 7 to 9. At tick 10, I saw Eve leave Weapons heading straight down towards Security. So she was definitely heading to where her body was found. \n\nAfter that, I went across to the left side of the ship, passing through Cafeteria and Oxygen, and I was in Upper Engine when the meeting was called. I haven't seen anyone over on the left side recently. \n\nSince Eve headed to Security at tick 10, she might have been killed shortly after. Diana, it makes sense you found her there later on your rotation. Let's hear from Alice to confirm Diana's alibi in Storage, and Bob, we need to know where you've been all round."}}
+{"timestamp": 1779363391.2073238, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_1", "message": "I've been bouncing around a lot this round, so let me lay it out. I started in Electrical, popped into Medbay early \u2014 Eve was there with me around ticks 2 and 3, then she left heading to Cafeteria around tick 4. After that I went back through Electrical, then up to Security around tick 11 where I actually saw Eve passing through. So Charlie, that lines up with your timing \u2014 she was heading down from Weapons through Security around then.\n\nFrom Security I went to Weapons, then Cafeteria, and looped back down through Medbay and Electrical. I saw Frank in Electrical at tick 20 \u2014 that's pretty recent, so whoever killed him did it after that, and it wasn't in Security where Eve was found.\n\nHere's what bothers me: Charlie, you said you went Navigation -> Security -> Weapons early, but I was in Security around tick 11 and didn't see you. You also said you ended up in Upper Engine. That's a lot of ground covered, and your path crosses right through Security where Eve died.\n\nDiana's story checks out with timing if Alice confirms Storage. Alice, we really need to hear from you."}}
+{"timestamp": 1779363408.706788, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_0", "message": "I can definitely confirm Diana's alibi. Diana came into Storage from Lower Engine at tick 14, and we were together there until tick 16. Her route exactly matches what she told us, so I fully trust her. \n\nI also saw Charlie early on in Security at tick 5, which backs up his story about starting in Nav and moving up through Security to Weapons.\n\nBob, your story is full of red flags. You claim you were in Security at tick 11 and saw Eve \"passing through,\" but her body was found in Security, meaning she likely didn't make it out of there. You also tried to throw suspicion on Charlie for not being in Security at tick 11, but Charlie just said he was in Weapons at tick 7-9 and then moved to the left side of the map, so obviously he wouldn't be in Security at tick 11.\n\nWorst of all, you just admitted to being in Electrical with Frank at tick 20. The meeting was called at tick 22. You are placing yourself as the last person to see BOTH victims right around the time and place they died. \n\nTo me, Bob is clearly the Duck. He killed Eve in Security around tick 11, and then killed Frank in Electrical right before Diana found Eve's body. I'm voting Bob."}}
+{"timestamp": 1779363418.871423, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_3", "message": "Bob"}}
+{"timestamp": 1779363429.232546, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_2", "message": "Bob"}}
+{"timestamp": 1779363443.117151, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_1", "message": "Look, I hear you Alice, but let's think about this carefully before we lock in a vote.\n\nYes, I saw Eve in Security at tick 11 \u2014 but \"passing through\" is what I observed. She was alive when I left heading to Weapons. If I'd killed her there, why would I volunteer that I was in Security at that exact moment? That's the last thing a killer would do. I'd lie and say I was somewhere else entirely.\n\nAs for Frank in Electrical at tick 20 \u2014 yes, I saw him alive there. But the meeting was called because Diana found Eve in SECURITY, not Frank. We don't even know where Frank's body is or when he actually died. He could have been killed after I left Electrical by someone else passing through.\n\nAlice, here's what concerns me about your read: you're conveniently the one vouching for Diana, and Diana is the one who \"found\" the body. Diana's route conveniently ends at the crime scene. That's classic \u2014 report the body yourself so you control the narrative, then have a buddy confirm your alibi for an earlier window that doesn't even cover the kill time.\n\nCharlie, you said you saw Eve leave Weapons heading to Security at tick 10. I saw her in Security at tick 11. That's consistent. Someone killed her AFTER tick 11.\n\nI'm not the Duck. But I can see the vote is against me, so if I'm wrong, look hard at Diana and Alice next round."}}
+{"timestamp": 1779363453.086407, "event_type": "discussion_message", "tick": 22, "data": {"player_id": "player_0", "message": "Bob"}}
+{"timestamp": 1779363453.090812, "event_type": "phase_changed", "tick": 22, "data": {"phase": "voting"}}
+{"timestamp": 1779363459.3254, "event_type": "vote_cast", "tick": 22, "data": {"voter": "player_0", "target": "player_1"}}
+{"timestamp": 1779363465.721771, "event_type": "vote_cast", "tick": 22, "data": {"voter": "player_1", "target": "player_0"}}
+{"timestamp": 1779363474.579663, "event_type": "vote_cast", "tick": 22, "data": {"voter": "player_2", "target": "player_1"}}
+{"timestamp": 1779363481.530328, "event_type": "vote_cast", "tick": 22, "data": {"voter": "player_3", "target": "player_1"}}
+{"timestamp": 1779363481.577284, "event_type": "player_ejected", "tick": 22, "data": {"player_id": "player_1", "name": "Bob", "role": "Duck", "team": "duck", "votes": {"player_0": "player_1", "player_1": "player_0", "player_2": "player_1", "player_3": "player_1"}}}
+{"timestamp": 1779363481.626105, "event_type": "game_over", "tick": 22, "data": {"winner": "goose", "reason": "All Ducks have been ejected"}}

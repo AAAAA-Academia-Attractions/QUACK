@@ -1,0 +1,1 @@
+{"key": "gpt-5.5|v2-route-2026-05-22|player_0|0|f42e0892b74d06e176f3902cff15d7fea83ec241319cb1c4dcdf0e17f6b9d868", "claims": [{"type": "location", "subject": "Charlie", "room": "weapons", "temporal": "when I found the body"}, {"type": "location", "subject": "Alice", "route": ["medbay", "electrical", "security", "weapons"], "temporal": "this round before finding the body"}]}

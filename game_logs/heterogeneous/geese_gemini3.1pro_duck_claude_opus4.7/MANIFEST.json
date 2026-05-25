@@ -1,0 +1,312 @@
+{
+  "package": "quack_heterogeneous_geese_gemini3.1pro_duck_claude_opus4.7_results",
+  "created_at_local": "2026-05-22T14:58:57",
+  "source_base": "/Users/zichen.zhao/Documents/My Projects/Quack/QUACK/game_logs/heterogeneous/geese_gemini3.1pro_duck_claude_opus4.7",
+  "condition": "heterogeneous/geese_gemini3.1pro_duck_claude_opus4.7",
+  "evaluation": {
+    "tier3": true,
+    "evaluator_model": "gpt-5.5",
+    "backend": "codex cli",
+    "service_tier": "fast",
+    "reasoning_effort": "high",
+    "num_games": 30,
+    "outputs": [
+      "batch_results.json",
+      "evaluation/summary.json",
+      "evaluation/*.json",
+      "*/evaluation.json",
+      "*/tier3_claims.jsonl",
+      "*/tier3_extraction_cache.jsonl",
+      "evaluate_batch_tier3_cli_gpt55_resume_20260523_113139.log"
+    ]
+  },
+  "seeds": [
+    {
+      "seed": 1,
+      "directory": "20260521_185321_seed1",
+      "events": 203,
+      "frames": 33,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": false
+    },
+    {
+      "seed": 2,
+      "directory": "20260521_193817_seed2",
+      "events": 371,
+      "frames": 68,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": false
+    },
+    {
+      "seed": 3,
+      "directory": "20260521_230410_seed3",
+      "events": 156,
+      "frames": 40,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 4,
+      "directory": "20260521_232010_seed4",
+      "events": 274,
+      "frames": 41,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 5,
+      "directory": "20260521_234131_seed5",
+      "events": 93,
+      "frames": 21,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 6,
+      "directory": "20260521_234955_seed6",
+      "events": 163,
+      "frames": 31,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 7,
+      "directory": "20260522_000247_seed7",
+      "events": 371,
+      "frames": 86,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 8,
+      "directory": "20260522_003612_seed8",
+      "events": 200,
+      "frames": 38,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 9,
+      "directory": "20260522_005320_seed9",
+      "events": 227,
+      "frames": 61,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 10,
+      "directory": "20260522_011433_seed10",
+      "events": 119,
+      "frames": 25,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 11,
+      "directory": "20260522_012405_seed11",
+      "events": 181,
+      "frames": 45,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 12,
+      "directory": "20260522_013748_seed12",
+      "events": 231,
+      "frames": 51,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 13,
+      "directory": "20260522_015540_seed13",
+      "events": 149,
+      "frames": 41,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 14,
+      "directory": "20260522_020802_seed14",
+      "events": 366,
+      "frames": 76,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 15,
+      "directory": "20260522_023422_seed15",
+      "events": 265,
+      "frames": 57,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 16,
+      "directory": "20260522_025600_seed16",
+      "events": 234,
+      "frames": 48,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 17,
+      "directory": "20260522_031423_seed17",
+      "events": 296,
+      "frames": 58,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 18,
+      "directory": "20260522_033821_seed18",
+      "events": 195,
+      "frames": 33,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 19,
+      "directory": "20260522_035254_seed19",
+      "events": 291,
+      "frames": 59,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 20,
+      "directory": "20260522_041705_seed20",
+      "events": 181,
+      "frames": 30,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 21,
+      "directory": "20260522_043120_seed21",
+      "events": 115,
+      "frames": 24,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 22,
+      "directory": "20260522_044011_seed22",
+      "events": 146,
+      "frames": 27,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 23,
+      "directory": "20260522_045036_seed23",
+      "events": 191,
+      "frames": 31,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 24,
+      "directory": "20260522_050357_seed24",
+      "events": 324,
+      "frames": 69,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 25,
+      "directory": "20260522_052732_seed25",
+      "events": 228,
+      "frames": 54,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 26,
+      "directory": "20260522_054416_seed26",
+      "events": 158,
+      "frames": 30,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 27,
+      "directory": "20260522_055547_seed27",
+      "events": 84,
+      "frames": 22,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 28,
+      "directory": "20260522_060412_seed28",
+      "events": 240,
+      "frames": 52,
+      "winner": "duck",
+      "reason": "Ducks have voting majority",
+      "has_run_log": true
+    },
+    {
+      "seed": 29,
+      "directory": "20260522_062105_seed29",
+      "events": 206,
+      "frames": 48,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    },
+    {
+      "seed": 30,
+      "directory": "20260522_064011_seed30",
+      "events": 88,
+      "frames": 21,
+      "winner": "goose",
+      "reason": "All Ducks have been ejected",
+      "has_run_log": true
+    }
+  ],
+  "included_per_run": [
+    "config.yaml",
+    "game.jsonl",
+    "evaluation.json",
+    "tier3_claims.jsonl",
+    "tier3_extraction_cache.jsonl",
+    "video.mp4",
+    "renders/god_view/*.png",
+    "run.log when present"
+  ],
+  "excluded": [
+    "api_key.txt",
+    ".venv",
+    "smoke runs",
+    "partial failed runs",
+    "git metadata"
+  ]
+}
