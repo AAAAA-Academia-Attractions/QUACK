@@ -1,3 +1,6 @@
+[![arXiv](https://img.shields.io/badge/arXiv-2605.27068-b31b1b)](https://arxiv.org/abs/2605.27068)
+[![Hugging Face Paper](https://img.shields.io/badge/🤗%20Paper-2605.27068-yellow)](https://huggingface.co/papers/2605.27068)
+
 # QUACK🦆: Questioning, Understanding, and Auditing Collaborative Knowledge
 
 ### A Multimodal Social Deduction Environment for Vision-Language Model Agents
@@ -779,4 +782,28 @@ QUACK/
 ├── claude_key.txt             # Anthropic API key for Claude Opus 4.7 (not committed)
 ├── pyproject.toml
 └── README.md
+```
+
+---
+
+## Links
+
+- **Paper (arXiv):** [https://arxiv.org/abs/2605.27068](https://arxiv.org/abs/2605.27068)
+- **Paper (Hugging Face):** [https://huggingface.co/papers/2605.27068](https://huggingface.co/papers/2605.27068)
+- **Game logs (Hugging Face Dataset):** [https://huggingface.co/datasets/5a-academia-attractions/QUACK](https://huggingface.co/datasets/5a-academia-attractions/QUACK)
+
+## Citation
+
+If you use QUACK in your research, please cite our paper:
+
+```bibtex
+@misc{yuan2026quack,
+      title={QUACK: Questioning, Understanding, and Auditing Communicated Knowledge in Multimodal Social Deduction Agents},
+      author={Ye Yuan and Rui Song and Weien Li and Zeyu Li and Haochen Liu and Xiangyu Kong and Changjiang Han and Yonghan Yang and Zichen Zhao and Zixuan Dong and Fuyuan Lyu and Bowei He and Haolun Wu and Jikun Kang and Xue Liu},
+      year={2026},
+      eprint={2605.27068},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2605.27068},
+}
 ```
