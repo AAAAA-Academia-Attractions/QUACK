@@ -31,3 +31,5 @@ god_view*.mp4
 outputs/
 batch_results.json
 old_game_logs/
+hf_token.txt
+hf_dataset/
